@@ -1,0 +1,28 @@
+# =========================================================================
+# FPGA BUILD TOOLCHAIN INTERMEDIATE OUTPUTS
+# =========================================================================
+# Yosys synthesis netlist map
+synth.json
+
+# NextPNR physical placement and routing map
+synth.asc
+
+# NextPNR timing/placement graphical logs
+*.rpt
+*.log
+
+# =========================================================================
+# HARDWARE BINARY FLASH PAYLOADS
+# =========================================================================
+# Final binary bitstreams pushed down to the iCESugar board
+program.bin
+*.bin
+
+# =========================================================================
+# OPERATING SYSTEM SPECIFIC METADATA
+# =========================================================================
+# macOS virtual volume cache leftovers (since you are on a MacBook Pro)
+.DS_Store
+.AppleDouble
+.LSOverride
+
