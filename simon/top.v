@@ -1,40 +1,170 @@
 // =========================================================================
-// HIGH-SPEED TIME-INTERLEAVED 16-DIGIT DTMF SEQUENCER FOR ICESUGAR V1.5
-// Expanded to sequence: 1-5-4-3-2-9-5-4-3-2-9-5-4-3-4-2 seamlessly.
+// CUSTOM RE-MAPPED DEBOUNCED DTMF KEYPAD DIALER FOR ICESUGAR V1.5
+// Forces physical silicon pull-up track activation using SB_IO primitives.
 // =========================================================================
 
 module top (
-    input clk,            // Onboard 12MHz master clock line from Pin 35
-    input ext_switch,     // Trigger switch input (Pin 32)
+    input clk,                    // Onboard 12MHz master clock line from Pin 35
     output led_r, led_g, led_b,
-    output audio_l,       // Connects to PMOD2 Pin 1 (iCE40 Pin 43)
-    output audio_r,       // Connects to PMOD2 Pin 2 (iCE40 Pin 38)
-    output amp_power      // Connects to PMOD2 Pin 4 (iCE40 Pin 28) to wake up amplifier
+    
+    // PMOD2: Audio Output Interface Links
+    output audio_l,               // PMOD2 Pin 1 (iCE40 Pin 43)
+    output audio_r,               // PMOD2 Pin 2 (iCE40 Pin 38)
+    output amp_power,             // PMOD2 Pin 4 (iCE40 Pin 28)
+
+    // PMOD1: Custom 4x4 Keypad Interface Matrix Bus Ports
+    output reg [3:0] kp_rows,    // PMOD1 Pins 1,2,3,4 (Outputs)
+    input      [3:0] kp_cols     // PMOD1 Pins 10,9,8,7 (Raw Silicon Pins)
 );
 
-    // CRITICAL HARDWARE WAKE-UP: Drive Pin 28 high to open the physical amplifier gates
+    // Keep the external amplifier chip on PMOD2 awake continuously
     assign amp_power = 1'b1;
 
     // ---------------------------------------------------------------------
-    // 1. FIXED: Expanded 64-Bit Telephone Array Vector (16 Digits * 4-bits)
-    // Packed in reverse order so index 0 extracts the leftmost number (4'd1)
+    // 1. Stable Matrix Scan Clock Divider (12MHz / 12000 = 1 kHz Scan Rate)
     // ---------------------------------------------------------------------
-    wire [63:0] phone_number = {
-        4'd2, 4'd4, 4'd3, 4'd4, // [15:12] -> 2, 4, 3, 4
-        4'd5, 4'd9, 4'd2, 4'd3, // [11:8]  -> 5, 9, 2, 3
-        4'd4, 4'd5, 4'd9, 4'd2, // [7:4]   -> 4, 5, 9, 2
-        4'd3, 4'd4, 4'd5, 4'd1  // [3:0]   -> 3, 4, 5, 1
-    };
+    reg [13:0] scan_divider = 0;
+    wire scan_tick = (scan_divider == 14'd11999);
+
+    always @(posedge clk) begin
+        if (scan_divider >= 14'd11999)
+            scan_divider <= 0;
+        else
+            scan_divider <= scan_divider + 1'b1;
+    end
 
     // ---------------------------------------------------------------------
-    // 2. High-Speed Oscillator Engine Clocks
+    // 2. Active Low Sequential Row Shifter State Machine
+    // ---------------------------------------------------------------------
+    reg [1:0] scan_row_ptr = 0;
+
+    always @(posedge clk) begin
+        if (scan_tick) begin
+            scan_row_ptr <= scan_row_ptr + 1'b1; // Steps 0 -> 1 -> 2 -> 3
+        end
+    end
+
+    // Combinatorial 1-hot row masking decoder loop
+    always @(*) begin
+        case (scan_row_ptr)
+            2'd0:    kp_rows = 4'b1110; // Drive Row 1 low
+            2'd1:    kp_rows = 4'b1101; // Drive Row 2 low
+            2'd2:    kp_rows = 4'b1011; // Drive Row 3 low
+            2'd3:    kp_rows = 4'b0111; // Drive Row 4 low
+            default: kp_rows = 4'b1111;
+        endcase
+    end
+
+    // ---------------------------------------------------------------------
+    // 3. HARDWARE INDUSTRIAL PULL-UP ELEMENT MATRIX
+    // Bypasses NextPNR PCF bugs by declaring explicit silicon cells.
+    // Maps raw kp_cols input lines to stable internal kp_cols_buffered buses.
+    // ---------------------------------------------------------------------
+    wire [3:0] kp_cols_buffered;
+
+    SB_IO #(.PIN_TYPE(6'b000001), .PULLUP(1'b1)) u_col0_pullup (.PACKAGE_PIN(kp_cols[0]), .D_IN_0(kp_cols_buffered[0]));
+    SB_IO #(.PIN_TYPE(6'b000001), .PULLUP(1'b1)) u_col1_pullup (.PACKAGE_PIN(kp_cols[1]), .D_IN_0(kp_cols_buffered[1]));
+    SB_IO #(.PIN_TYPE(6'b000001), .PULLUP(1'b1)) u_col2_pullup (.PACKAGE_PIN(kp_cols[2]), .D_IN_0(kp_cols_buffered[2]));
+    SB_IO #(.PIN_TYPE(6'b000001), .PULLUP(1'b1)) u_col3_pullup (.PACKAGE_PIN(kp_cols[3]), .D_IN_0(kp_cols_buffered[3]));
+
+    // ---------------------------------------------------------------------
+    // 4. Matrix Decode Interceptor Index Bus (Uses the buffered lines)
+    // ---------------------------------------------------------------------
+    reg [3:0] raw_key_code;
+    reg       key_is_pressed;
+
+    always @(*) begin
+        raw_key_code   = 4'd0;
+        key_is_pressed = 1'b0;
+
+        case (kp_rows)
+            4'b1110: begin // Row 1 Active (Green Wire)
+                if (!kp_cols_buffered[0]) begin raw_key_code = 4'd1;  key_is_pressed = 1'b1; end // Key '1' (White Wire)
+                if (!kp_cols_buffered[1]) begin raw_key_code = 4'd2;  key_is_pressed = 1'b1; end // Key '2' (Black Wire)
+                if (!kp_cols_buffered[2]) begin raw_key_code = 4'd3;  key_is_pressed = 1'b1; end // Key '3' (Brown Wire)
+                if (!kp_cols_buffered[3]) begin raw_key_code = 4'd12; key_is_pressed = 1'b1; end // Key 'A' (Red Wire)
+            end
+            4'b1101: begin // Row 2 Active (Blue Wire)
+                if (!kp_cols_buffered[0]) begin raw_key_code = 4'd4;  key_is_pressed = 1'b1; end // Key '4' (White Wire)
+                if (!kp_cols_buffered[1]) begin raw_key_code = 4'd5;  key_is_pressed = 1'b1; end // Key '5' (Black Wire)
+                if (!kp_cols_buffered[2]) begin raw_key_code = 4'd6;  key_is_pressed = 1'b1; end // Key '6' (Brown Wire)
+                if (!kp_cols_buffered[3]) begin raw_key_code = 4'd13; key_is_pressed = 1'b1; end // Key 'B' (Red Wire)
+            end
+            4'b1011: begin // Row 3 Active (Purple Wire)
+                if (!kp_cols_buffered[0]) begin raw_key_code = 4'd7;  key_is_pressed = 1'b1; end // Key '7' (White Wire)
+                if (!kp_cols_buffered[1]) begin raw_key_code = 4'd8;  key_is_pressed = 1'b1; end // Key '8' (Black Wire)
+                if (!kp_cols_buffered[2]) begin raw_key_code = 4'd9;  key_is_pressed = 1'b1; end // Key '9' (Brown Wire)
+                if (!kp_cols_buffered[3]) begin raw_key_code = 4'd14; key_is_pressed = 1'b1; end // Key 'C' (Red Wire)
+            end
+            4'b0111: begin // Row 4 Active (Grey Wire)
+                if (!kp_cols_buffered[0]) begin raw_key_code = 4'd10; key_is_pressed = 1'b1; end // Key '*' (White Wire)
+                if (!kp_cols_buffered[1]) begin raw_key_code = 4'd0;  key_is_pressed = 1'b1; end // Key '0' (Black Wire)
+                if (!kp_cols_buffered[2]) begin raw_key_code = 4'd11; key_is_pressed = 1'b1; end // Key '#' (Brown Wire)
+                if (!kp_cols_buffered[3]) begin raw_key_code = 4'd15; key_is_pressed = 1'b1; end // Key 'D' (Red Wire)
+            end
+            default: begin raw_key_code = 4'd0; key_is_pressed = 1'b0; end
+        endcase
+    end
+
+    // ---------------------------------------------------------------------
+    // 5. Glitch Filter Debounce Tracking Array Window
+    // ---------------------------------------------------------------------
+    reg [3:0] debounced_key_code = 4'd0;
+    reg       debounced_sounding = 1'b0;
+    reg [3:0] debounce_counter = 0;
+
+    always @(posedge clk) begin
+        if (scan_tick) begin
+            if (key_is_pressed) begin
+                if (debounce_counter < 4'd15) begin
+                    debounce_counter <= debounce_counter + 1'b1;
+                end else begin
+                    debounced_key_code <= raw_key_code;
+                    debounced_sounding <= 1'b1;
+                end
+            end else begin
+                if (debounce_counter > 0) begin
+                    debounce_counter <= debounce_counter - 1'b1;
+                end else begin
+                    debounced_sounding <= 1'b0;
+                end
+            end
+        end
+    end
+
+    // ---------------------------------------------------------------------
+    // 6. DTMF Target Coordinate Matrix Router
+    // ---------------------------------------------------------------------
+    reg [13:0] row_max;
+    reg [13:0] col_max;
+
+    always @(*) begin
+        case (debounced_key_code)
+            4'd1:  begin row_max = 14'd8608; col_max = 14'd4962; end // 1: 697Hz + 1209Hz
+            4'd2:  begin row_max = 14'd8608; col_max = 14'd4491; end // 2: 697Hz + 1336Hz
+            4'd3:  begin row_max = 14'd8608; col_max = 14'd4062; end // 3: 697Hz + 1477Hz
+            4'd4:  begin row_max = 14'd7792; col_max = 14'd4962; end // 4: 770Hz + 1209Hz
+            4'd5:  begin row_max = 14'd7792; col_max = 14'd4491; end // 5: 770Hz + 1336Hz
+            4'd6:  begin row_max = 14'd7792; col_max = 14'd4062; end // 6: 770Hz + 1477Hz
+            4'd7:  begin row_max = 14'd7042; col_max = 14'd4962; end // 7: 852Hz + 1209Hz
+            4'd8:  begin row_max = 14'd7042; col_max = 14'd4491; end // 8: 852Hz + 1336Hz
+            4'd9:  begin row_max = 14'd7042; col_max = 14'd4062; end // 9: 852Hz + 1477Hz
+            4'd0:  begin row_max = 14'd6362; col_max = 14'd4491; end // 0: 941Hz + 1336Hz
+            4'd10: begin row_max = 14'd6362; col_max = 14'd4962; end // *: 941Hz + 1209Hz
+            4'd11: begin row_max = 14'd6362; col_max = 14'd4062; end // #: 941Hz + 1477Hz
+            4'd12: begin row_max = 14'd8608; col_max = 14'd3674; end // A: 697Hz + 1633Hz
+            4'd13: begin row_max = 14'd7792; col_max = 14'd3674; end // B: 770Hz + 1633Hz
+            4'd14: begin row_max = 14'd7042; col_max = 14'd3674; end // C: 852Hz + 1633Hz
+            4'd15: begin row_max = 14'd6362; col_max = 14'd3674; end // D: 941Hz + 1633Hz
+            default: begin row_max = 14'd0; col_max = 14'd0;    end
+        endcase
+    end
+
+    // ---------------------------------------------------------------------
+    // 7. High-Speed Audio Oscillators
     // ---------------------------------------------------------------------
     reg [13:0] row_counter = 0;
     reg [13:0] col_counter = 0;
-    
-    reg [13:0] row_max;
-    reg [13:0] col_max;
-    
     reg row_square = 0;
     reg col_square = 0;
 
@@ -55,81 +185,19 @@ module top (
     end
 
     // ---------------------------------------------------------------------
-    // 3. FIXED: 4-Bit Paced Character Loop Sequencer (~333ms per sound)
-    // Expanded pointer boundary perfectly cycles across indices 0 to 15
-    // ---------------------------------------------------------------------
-    reg [25:0] frame_counter = 0; // FIXED: Expanded from [21:0] to [25:0]
-    reg [3:0]  digit_ptr = 0; 
-    
-    reg [3:0] active_digit;
-    always @(*) begin
-        case(digit_ptr)
-            4'd0:  active_digit = phone_number[3:0];   // 1
-            4'd1:  active_digit = phone_number[7:4];   // 5
-            4'd2:  active_digit = phone_number[11:8];  // 4
-            4'd3:  active_digit = phone_number[15:12]; // 3
-            4'd4:  active_digit = phone_number[19:16]; // 2
-            4'd5:  active_digit = phone_number[23:20]; // 9
-            4'd6:  active_digit = phone_number[27:24]; // 5
-            4'd7:  active_digit = phone_number[31:28]; // 4
-            4'd8:  active_digit = phone_number[35:32]; // 3
-            4'd9:  active_digit = phone_number[39:36]; // 2
-            4'd10: active_digit = phone_number[43:40]; // 9
-            4'd11: active_digit = phone_number[47:44]; // 5
-            4'd12: active_digit = phone_number[51:48]; // 4
-            4'd13: active_digit = phone_number[55:52]; // 3
-            4'd14: active_digit = phone_number[59:56]; // 4
-            4'd15: active_digit = phone_number[63:60]; // 2
-        endcase
-    end
-
-    // Expanded Baseline phone pacing durations for a 5-second interval
-    localparam TONE_DURATION = 26'd30000000; // FIXED: 26-bit prefix (~2.5 Seconds of sound)
-    localparam TOTAL_FRAME   = 26'd60000000; // FIXED: 26-bit prefix (~5.0 Seconds total window)
-
-    always @(posedge clk) begin
-        frame_counter <= frame_counter + 1'b1;
-        if (frame_counter >= TOTAL_FRAME) begin 
-            frame_counter <= 0;
-            digit_ptr     <= digit_ptr + 1'b1; // Auto-rolls over cleanly back to step 0
-        end
-    end
-
-    wire is_sounding = (frame_counter < TONE_DURATION);
-
-    // ---------------------------------------------------------------------
-    // 4. FIXED: DTMF Coordinate Decoder Array Matrix (Incorporates 5 and 9)
-    // Max Counts Calculation Core: 12,000,000 / (Target Freq * 2)
-    // ---------------------------------------------------------------------
-    always @(*) begin
-        case (active_digit)
-            4'd1: begin row_max = 14'd8608; col_max = 14'd4962; end // 1: 697Hz + 1209Hz
-            4'd2: begin row_max = 14'd8608; col_max = 14'd4491; end // 2: 697Hz + 1336Hz
-            4'd3: begin row_max = 14'd8608; col_max = 14'd4062; end // 3: 697Hz + 1477Hz
-            4'd4: begin row_max = 14'd7792; col_max = 14'd4962; end // 4: 770Hz + 1209Hz
-            4'd5: begin row_max = 14'd7792; col_max = 14'd4491; end // 5: 770Hz + 1336Hz  
-            4'd9: begin row_max = 14'd7042; col_max = 14'd4062; end // 9: 852Hz + 1477Hz  
-            default: begin row_max = 14'd0; col_max = 14'd0;    end // Quiet fallback
-        endcase
-    end
-
-    // ---------------------------------------------------------------------
-    // 5. 12MHz Interleaved Smooth Analog Mixer
+    // 8. Time-Interleaved Mixer and Direct Output Drive
     // ---------------------------------------------------------------------
     reg mix_clock_phase = 0;
     always @(posedge clk) mix_clock_phase <= ~mix_clock_phase;
 
-    wire dtmf_output = is_sounding ? (mix_clock_phase ? row_square : col_square) : 1'b0;
+    wire dtmf_output = debounced_sounding ? (mix_clock_phase ? row_square : col_square) : 1'b0;
 
-    // ---------------------------------------------------------------------
-    // 6. Direct Hardware Port Drive
-    // ---------------------------------------------------------------------
     assign audio_l = dtmf_output;
     assign audio_r = dtmf_output;
 
-    // LED Sync Status Check (Blinks across the 16 digit increments)
-    assign led_r = ~digit_ptr[0];
-    assign led_g = ~digit_ptr[1];
-    assign led_b = is_sounding;
+    // Diagnostic indicators
+    assign led_r = ~debounced_sounding;
+    assign led_g = ~key_is_pressed;
+
 
 endmodule
