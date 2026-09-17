@@ -7,9 +7,13 @@ module top (
     input clk,            // Onboard 12MHz master clock line from Pin 35
     input ext_switch,     // Trigger switch input (Pin 32)
     output led_r, led_g, led_b,
-    output audio_l,       // Connects to PMOD2 Pin 1 (iCE40 Pin 46)
-    output audio_r        // Connects to PMOD2 Pin 2 (iCE40 Pin 44)
+    output audio_l,       // Connects to PMOD2 Pin 1 (iCE40 Pin 43)
+    output audio_r,       // Connects to PMOD2 Pin 2 (iCE40 Pin 38)
+    output amp_power      // Connects to PMOD2 Pin 4 (iCE40 Pin 28) to wake up amplifier
 );
+
+    // CRITICAL HARDWARE WAKE-UP: Drive Pin 28 high to open the physical amplifier gates
+    assign amp_power = 1'b1;
 
     // ---------------------------------------------------------------------
     // 1. FIXED: Expanded 64-Bit Telephone Array Vector (16 Digits * 4-bits)
@@ -103,8 +107,8 @@ module top (
             4'd2: begin row_max = 14'd8608; col_max = 14'd4491; end // 2: 697Hz + 1336Hz
             4'd3: begin row_max = 14'd8608; col_max = 14'd4062; end // 3: 697Hz + 1477Hz
             4'd4: begin row_max = 14'd7792; col_max = 14'd4962; end // 4: 770Hz + 1209Hz
-            4'd5: begin row_max = 14'd7792; col_max = 14'd4491; end // 5: 770Hz + 1336Hz  (NEWLY ADDED)
-            4'd9: begin row_max = 14'd7042; col_max = 14'd4062; end // 9: 852Hz + 1477Hz  (NEWLY ADDED)
+            4'd5: begin row_max = 14'd7792; col_max = 14'd4491; end // 5: 770Hz + 1336Hz  
+            4'd9: begin row_max = 14'd7042; col_max = 14'd4062; end // 9: 852Hz + 1477Hz  
             default: begin row_max = 14'd0; col_max = 14'd0;    end // Quiet fallback
         endcase
     end
