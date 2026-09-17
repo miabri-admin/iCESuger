@@ -54,8 +54,8 @@ module top (
     // 3. FIXED: 4-Bit Paced Character Loop Sequencer (~333ms per sound)
     // Expanded pointer boundary perfectly cycles across indices 0 to 15
     // ---------------------------------------------------------------------
-    reg [21:0] frame_counter = 0;
-    reg [3:0]  digit_ptr = 0; // 4-bit width maps 0-15 steps safely
+    reg [25:0] frame_counter = 0; // FIXED: Expanded from [21:0] to [25:0]
+    reg [3:0]  digit_ptr = 0; 
     
     reg [3:0] active_digit;
     always @(*) begin
@@ -79,9 +79,9 @@ module top (
         endcase
     end
 
-    // Standard baseline phone pacing durations
-    localparam TONE_DURATION = 22'd3000000; // ~250ms play tone
-    localparam TOTAL_FRAME   = 22'd4000000; // ~333ms total space block (Creates gap)
+    // Expanded Baseline phone pacing durations for a 5-second interval
+    localparam TONE_DURATION = 26'd30000000; // FIXED: 26-bit prefix (~2.5 Seconds of sound)
+    localparam TOTAL_FRAME   = 26'd60000000; // FIXED: 26-bit prefix (~5.0 Seconds total window)
 
     always @(posedge clk) begin
         frame_counter <= frame_counter + 1'b1;
