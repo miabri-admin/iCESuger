@@ -1,0 +1,20 @@
+# Master 12MHz Clock Source
+set_io clk          35
+
+# Onboard Trigger Switch (DIP Switch 1)
+set_io ext_switch   18
+
+# Onboard RGB Status LEDs (Active Low)
+set_io led_r        40
+set_io led_g        39
+set_io led_b        41
+
+# ==========================================================
+# PMOD 2 Mappings for your Audio Module (Standard Board Layout)
+# ==========================================================
+set_io audio_l      43   # PMOD2 Pin 1: Left Channel Main Signal Input (AIN)
+set_io audio_r      38   # PMOD2 Pin 2: Right Channel Main Gain Control
+
+# Extra auxiliary bindings to ensure the module amplifier stays awake
+set_io amp_power    28   # PMOD2 Pin 4: Amplifier ~SHUTDOWN (Drawn High in Top.v)
+set_io audio_p3     32   # PMOD2 Pin 3: NC / Clear Line
