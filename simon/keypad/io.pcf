@@ -1,0 +1,17 @@
+# Master 12MHz Clock Source Pin Binding
+set_io clk          35
+
+# Onboard Status LED Diagnostic Traces (Active Low Layout)
+set_io led_r        40
+set_io led_g        39
+set_io led_b        41
+
+# Test Pins exclusively on PMOD1 and PMOD3
+set_io test_out     10   # PMOD1 Pin 1 (Top Row Output)
+set_io test_out2     6   # PMOD1 Pin 1 (Top Row Output)
+
+
+
+
+set_io -pullup yes test_in      26   # PMOD3 Pin 8 (Bottom Row Input)
+set_io -pullup yes test_in2      23   # PMOD3 Pin 8 (Bottom Row Input)
