@@ -1,13 +1,13 @@
 // =========================================================================
-// FULL 4x4 MATRIX DECODER (16 KEYS MAPPED 0-15, 16 = DEFAULT OFF)
-// Rows = test_out0..3 | Columns = test_in0..3
+// REFACTORED 4x4 MATRIX DECODER (COLUMN SELECT PATTERN)
+// Rows = test_out0..3 | Columns = test_in0..3 via unified input bus
 // key_code: 0 to 15 = Active Keys, 16 = Idle/Off
 // =========================================================================
 
 module top (
     input  clk,
     
-    // Expanded 4x4 Matrix Interface Pins
+    // 4x4 Matrix Interface Pins
     output reg test_out0, // Row 1
     output reg test_out1, // Row 2
     output reg test_out2, // Row 3
@@ -24,15 +24,16 @@ module top (
 );
 
     // ---------------------------------------------------------------------
-    // 1. Internal Scan Multiplexer Clock (Upgraded for 4 Rows)
+    // 1. Internal Scan Multiplexer Clock (Row Pointers)
     // ---------------------------------------------------------------------
-    reg [1:0]  row_select = 2'b00; // 2-bit pointer for 4 rows
+    reg [1:0]  row_select = 2'b00; 
     reg [11:0] scan_counter = 0;
+    reg [1:0] r_val, g_val, b_val;
 
     always @(posedge clk) begin
         if (scan_counter >= 12'd3999) begin 
             scan_counter <= 0;
-            row_select   <= row_select + 1'b1; // Steps cleanly through 00 -> 01 -> 10 -> 11
+            row_select   <= row_select + 1'b1; 
         end else begin
             scan_counter <= scan_counter + 1'b1;
         end
@@ -41,67 +42,48 @@ module top (
     // Active-Low 1-hot Row Multiplexer Sequence
     always @(*) begin
         case(row_select)
-            2'b00: begin test_out0 = 1'b0; test_out1 = 1'b1; test_out2 = 1'b1; test_out3 = 1'b1; end // Row 1 Active
-            2'b01: begin test_out0 = 1'b1; test_out1 = 1'b0; test_out2 = 1'b1; test_out3 = 1'b1; end // Row 2 Active
-            2'b10: begin test_out0 = 1'b1; test_out1 = 1'b1; test_out2 = 1'b0; test_out3 = 1'b1; end // Row 3 Active
-            2'b11: begin test_out0 = 1'b1; test_out1 = 1'b1; test_out2 = 1'b1; test_out3 = 1'b0; end // Row 4 Active
+            2'b00: begin test_out0 = 1'b0; test_out1 = 1'b1; test_out2 = 1'b1; test_out3 = 1'b1; end 
+            2'b01: begin test_out0 = 1'b1; test_out1 = 1'b0; test_out2 = 1'b1; test_out3 = 1'b1; end 
+            2'b10: begin test_out0 = 1'b1; test_out1 = 1'b1; test_out2 = 1'b0; test_out3 = 1'b1; end 
+            2'b11: begin test_out0 = 1'b1; test_out1 = 1'b1; test_out2 = 1'b1; test_out3 = 1'b0; end 
         endcase
     end
 
     // ---------------------------------------------------------------------
-    // 2. Full 16-Key Continuous Scanning Capture Buffer
+    // 2. Column Select Array & Latch Register Arrays
     // ---------------------------------------------------------------------
-    reg raw_k0=0, raw_k1=0, raw_k2=0, raw_k3=0;
-    reg raw_k4=0, raw_k5=0, raw_k6=0, raw_k7=0;
-    reg raw_k8=0, raw_k9=0, raw_k10=0, raw_k11=0;
-    reg raw_k12=0, raw_k13=0, raw_k14=0, raw_k15=0;
+    wire [3:0] cols = {test_in3, test_in2, test_in1, test_in0}; // Unified vector input
+    reg  [1:0] col_select;
+    reg        key_found;
+
+    // Decode active low column inputs down to a 2-bit selection index
+    always @(*) begin
+        col_select = 2'b00;
+        key_found  = 1'b0;
+        if (!cols[0])      begin col_select = 2'b00; key_found = 1'b1; end
+        else if (!cols[1]) begin col_select = 2'b01; key_found = 1'b1; end
+        else if (!cols[2]) begin col_select = 2'b10; key_found = 1'b1; end
+        else if (!cols[3]) begin col_select = 2'b11; key_found = 1'b1; end
+    end
+
+    // ---------------------------------------------------------------------
+    // 3. Encoder: Map row_select + col_select into a single 5-bit key_code
+    // ---------------------------------------------------------------------
+    reg [4:0] key_code = 5'd16;
 
     always @(posedge clk) begin
-        if (test_out0 == 1'b0) begin 
-            raw_k0 <= ~test_in0; raw_k1 <= ~test_in1; raw_k2 <= ~test_in2; raw_k3 <= ~test_in3;
-        end 
-        if (test_out1 == 1'b0) begin 
-            raw_k4 <= ~test_in0; raw_k5 <= ~test_in1; raw_k6 <= ~test_in2; raw_k7 <= ~test_in3;
-        end
-        if (test_out2 == 1'b0) begin 
-            raw_k8 <= ~test_in0; raw_k9 <= ~test_in1; raw_k10 <= ~test_in2; raw_k11 <= ~test_in3;
-        end
-        if (test_out3 == 1'b0) begin 
-            raw_k12 <= ~test_in0; raw_k13 <= ~test_in1; raw_k14 <= ~test_in2; raw_k15 <= ~test_in3;
+        if (key_found) begin
+            // Math shortcut mapping: (row * 4) + column
+            key_code <= {row_select, col_select}; 
+        end else begin
+            // Optional sweep clean: Only release code if the active row scanning has no press
+            // Keeps the key output continuous across the alternate matrix cycles
+            if (scan_counter == 12'd0) begin
+                key_code <= 5'd16; 
+            end
         end
     end
 
-    // ---------------------------------------------------------------------
-    // 3. Encoder: Prioritised 16-Key Map to numeric values 0-15 (16 = idle)
-    // ---------------------------------------------------------------------
-    reg [4:0] key_code; 
-
-    always @(*) begin
-        if (raw_k0)        key_code = 5'd0;
-        else if (raw_k1)   key_code = 5'd1;
-        else if (raw_k2)   key_code = 5'd2;
-        else if (raw_k3)   key_code = 5'd3;
-        else if (raw_k4)   key_code = 5'd4;
-        else if (raw_k5)   key_code = 5'd5;
-        else if (raw_k6)   key_code = 5'd6;
-        else if (raw_k7)   key_code = 5'd7;
-        else if (raw_k8)   key_code = 5'd8;
-        else if (raw_k9)   key_code = 5'd9;
-        else if (raw_k10)  key_code = 5'd10;
-        else if (raw_k11)  key_code = 5'd11;
-        else if (raw_k12)  key_code = 5'd12;
-        else if (raw_k13)  key_code = 5'd13;
-        else if (raw_k14)  key_code = 5'd14;
-        else if (raw_k15)  key_code = 5'd15;
-        else               key_code = 5'd16; // Default state: Nothing pressed -> LEDs Off
-    end
-
-    // ---------------------------------------------------------------------
-    // 4. 17-State Distinct Mix Look-up (PWM Level Blending Matrix)
-    // ---------------------------------------------------------------------
-    reg [1:0] r_val;
-    reg [1:0] g_val;
-    reg [1:0] b_val;
 
     always @(*) begin
         case (key_code)
@@ -129,6 +111,7 @@ module top (
         endcase
     end
 
+
     // ---------------------------------------------------------------------
     // 5. Fast 2-Bit PWM Modulation Engine
     // ---------------------------------------------------------------------
@@ -144,5 +127,6 @@ module top (
     assign led_r = ~(r_val > pwm_frame);
     assign led_g = ~(g_val > pwm_frame);
     assign led_b = ~(b_val > pwm_frame);
+
 
 endmodule
