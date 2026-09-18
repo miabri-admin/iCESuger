@@ -8,10 +8,10 @@ module top (
     input  clk,
     
     // Matrix Interface Pins
-    output reg test_out,  // Row 1
-    output reg test_out2, // Row 2
-    input      test_in,   // Column 1
-    input      test_in2,  // Column 2
+    output reg test_out0,  // Row 1
+    output reg test_out1, // Row 2
+    input      test_in0,   // Column 1
+    input      test_in1,  // Column 2
 
     // Onboard Diagnostic Indicator LEDs (Active-Low)
     output led_r,
@@ -37,11 +37,11 @@ module top (
     // Drive rows active-low depending on the current select state
     always @(*) begin
         if (row_select == 1'b0) begin
-            test_out  = 1'b0; // Drive Row 1 LOW
-            test_out2 = 1'b1; // Keep Row 2 HIGH
+            test_out0  = 1'b0; // Drive Row 1 LOW
+            test_out1  = 1'b1; // Keep Row 2 HIGH
         end else begin
-            test_out  = 1'b1; // Keep Row 1 HIGH
-            test_out2 = 1'b0; // Drive Row 2 LOW
+            test_out0  = 1'b1; // Keep Row 1 HIGH
+            test_out1  = 1'b0; // Drive Row 2 LOW
         end
     end
 
@@ -54,13 +54,13 @@ module top (
     reg raw_key4 = 0;
 
     always @(posedge clk) begin
-        if (test_out == 1'b0) begin 
-            raw_key1 <= ~test_in;   // Sample Key 1
-            raw_key2 <= ~test_in2;  // Sample Key 2
+        if (test_out0 == 1'b0) begin 
+            raw_key1 <= ~test_in0;   // Sample Key 1
+            raw_key2 <= ~test_in1;  // Sample Key 2
         end 
-        if (test_out2 == 1'b0) begin 
-            raw_key3 <= ~test_in;   // Sample Key 3
-            raw_key4 <= ~test_in2;  // Sample Key 4
+        if (test_out1 == 1'b0) begin 
+            raw_key3 <= ~test_in0;   // Sample Key 3
+            raw_key4 <= ~test_in1;  // Sample Key 4
         end
     end
 
