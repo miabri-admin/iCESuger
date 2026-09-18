@@ -6,24 +6,26 @@ set_io led_r        40
 set_io led_g        39
 set_io led_b        41
 
-# =========================================================================
-# PMOD 2: RESTORED AUDIO SIGNAL GENERATOR INTERFACE (KEEP STABLE)
-# =========================================================================
-set_io audio_l      43   # PMOD2 Pin 1
-set_io audio_r      38   # PMOD2 Pin 2
-set_io amp_power    28   # PMOD2 Pin 4
+# Test Pins exclusively on PMOD1 and PMOD3
+set_io test_out0     10  # PMOD1 Pin 1 (Top Row Output)
+set_io test_out1     6   # PMOD1 Pin 2 (Top Row Output)
+set_io test_out2     3   # PMOD1 Pin 3 (Top Row Output)
+set_io test_out3     48  # PMOD1 Pin 4 (Top Row Output)
 
-# =========================================================================
-# PMOD 1: TRUE PHYSICAL SILICON KEYPAD BUS PIN MAPPINGS
-# =========================================================================
-# Output scanning row tracks driving low systematically
-set_io kp_rows[0]   34   # PMOD1 Pin 1 (R1 - Green Wire)
-set_io kp_rows[1]   37   # PMOD1 Pin 2 (R2 - Blue Wire)
-set_io kp_rows[2]   31   # PMOD1 Pin 3 (R3 - Purple Wire)
-set_io kp_rows[3]   25   # PMOD1 Pin 4 (R4 - Grey Wire)
 
-# Input column tracks (Clean wire routing - Pull-ups forced inside top.v)
-set_io kp_cols[0]   45   # PMOD1 Pin 10 (C1 - White Wire)
-set_io kp_cols[1]   48   # PMOD1 Pin 9  (C2 - Black Wire)
-set_io kp_cols[2]   3    # PMOD1 Pin 8  (C3 - Brown Wire)
-set_io kp_cols[3]   4    # PMOD1 Pin 7  (C4 - Red Wire)
+
+set_io -pullup yes test_in0     23   # PMOD3 Pin 1 (Bottom Row Input)
+set_io -pullup yes test_in1     26   # PMOD3 Pin 2 (Bottom Row Input)
+set_io -pullup yes test_in2     28   # PMOD3 Pin 3 (Bottom Row Input)
+set_io -pullup yes test_in3     32   # PMOD3 Pin 4 (Bottom Row Input)
+
+
+# ==========================================================
+# PMOD 2 Mappings for your Audio Module (Standard Board Layout)
+# ==========================================================
+set_io audio_l      43   # PMOD2 Pin 1: Left Channel Main Signal Input (AIN)
+set_io audio_r      38   # PMOD2 Pin 2: Right Channel Main Gain Control
+
+# Extra auxiliary bindings to ensure the module amplifier stays awake
+set_io amp_power    28   # PMOD2 Pin 4: Amplifier ~SHUTDOWN (Drawn High in Top.v)
+set_io audio_p3     32   # PMOD2 Pin 3: NC / Clear Line
