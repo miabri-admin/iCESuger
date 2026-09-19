@@ -30,14 +30,15 @@ module simon_fsm (
     // 2. FSM State Definition Constants Layout
     // ---------------------------------------------------------------------
     localparam PLAY_START_TONE      = 4'd0;
-    localparam GENERATE_SEQUENCE    = 4'd1;
-    localparam PLAY_SIMON_SEQUENCE  = 4'd2;
-    localparam ENTER_LISTENING_MODE = 4'd3;
-    localparam CHECK_MATCH          = 4'd4;
-    localparam PLAY_WAWAWA          = 4'd5;
-    localparam PLAY_TADA            = 4'd6;
-    localparam PLAY_EXTENDED_TATA   = 4'd7;
-    localparam QUIET_STATE          = 4'd8;
+    localparam START_DELAY          = 4'd1; // 2-second pause before Simon plays
+    localparam GENERATE_SEQUENCE    = 4'd2;
+    localparam PLAY_SIMON_SEQUENCE  = 4'd3;
+    localparam ENTER_LISTENING_MODE = 4'd4;
+    localparam CHECK_MATCH          = 4'd5;
+    localparam PLAY_WAWAWA          = 4'd6;
+    localparam PLAY_TADA            = 4'd7;
+    localparam PLAY_EXTENDED_TATA   = 4'd8;
+    localparam QUIET_STATE          = 4'd9;
 
     reg [3:0] state = PLAY_START_TONE;
 
@@ -56,11 +57,11 @@ module simon_fsm (
     // ---------------------------------------------------------------------
     always @(posedge clk) begin
         if (reset) begin
-            state          <= PLAY_START_TONE;
-            seq_len        <= INIT_SEQ_LEN;
-            generic_timer  <= 0;
-            current_step   <= 0;
-            input_lockout  <= 1'b1;
+            state              <= PLAY_START_TONE;
+            seq_len            <= INIT_SEQ_LEN;
+            generic_timer      <= 0;
+            current_step       <= 0;
+            input_lockout      <= 1'b1;
             last_pressed_state <= 1'b0;
         end else begin
             last_pressed_state <= any_key_pressed; // Track finger state shift
@@ -72,32 +73,42 @@ module simon_fsm (
                     generic_timer <= generic_timer + 1'b1;
                     if (generic_timer >= 25'd11_999_999) begin // 1 Second Jingle Duration
                         generic_timer <= 0;
-                        state         <= GENERATE_SEQUENCE;
+                        state         <= START_DELAY; 
                     end
                 end
 
-                // --- STATE 1: Generate Complete Random Array Sequence ---
+                // --- STATE 1: 2-Second Pause (Silence & No Input) ---
+                START_DELAY: begin
+                    input_lockout <= 1'b1; // Keep user inputs locked out
+                    generic_timer <= generic_timer + 1'b1;
+                    if (generic_timer >= 25'd23_999_999) begin // 2 Seconds exact (12MHz clock)
+                        generic_timer <= 0;
+                        state         <= GENERATE_SEQUENCE; // Move to game setup
+                    end
+                end
+
+                // --- STATE 2: Generate Complete Random Array Sequence ---
                 GENERATE_SEQUENCE: begin
                     // Populates target steps sequentially based on the rolling RNG wheel
-                    simon_sequence[0] <= {1'b0, lfsr_rng};
-                    simon_sequence[1] <= {1'b0, lfsr_rng + 4'd3};
-                    simon_sequence[2] <= {1'b0, lfsr_rng + 4'd7};
-                    simon_sequence[3] <= {1'b0, lfsr_rng + 4'd11};
-                    simon_sequence[4] <= {1'b0, lfsr_rng + 4'd2};
-                    simon_sequence[5] <= {1'b0, lfsr_rng + 4'd5};
-                    simon_sequence[6] <= {1'b0, lfsr_rng + 4'd9};
-                    simon_sequence[7] <= {1'b0, lfsr_rng + 4'd1};
-                    simon_sequence[8] <= {1'b0, lfsr_rng + 4'd4};
-                    simon_sequence[9] <= {1'b0, lfsr_rng + 4'd8};
-                    simon_sequence[10]<= {1'b0, lfsr_rng + 4'd6};
-                    simon_sequence[11]<= {1'b0, lfsr_rng + 4'd10};
+                    simon_sequence[0]  <= {1'b0, lfsr_rng};
+                    simon_sequence[1]  <= {1'b0, lfsr_rng + 4'd3};
+                    simon_sequence[2]  <= {1'b0, lfsr_rng + 4'd7};
+                    simon_sequence[3]  <= {1'b0, lfsr_rng + 4'd11};
+                    simon_sequence[4]  <= {1'b0, lfsr_rng + 4'd2};
+                    simon_sequence[5]  <= {1'b0, lfsr_rng + 4'd5};
+                    simon_sequence[6]  <= {1'b0, lfsr_rng + 4'd9};
+                    simon_sequence[7]  <= {1'b0, lfsr_rng + 4'd1};
+                    simon_sequence[8]  <= {1'b0, lfsr_rng + 4'd4};
+                    simon_sequence[9]  <= {1'b0, lfsr_rng + 4'd8};
+                    simon_sequence[10] <= {1'b0, lfsr_rng + 4'd6};
+                    simon_sequence[11] <= {1'b0, lfsr_rng + 4'd10};
                     
                     current_step  <= 0;
                     generic_timer <= 0;
                     state         <= PLAY_SIMON_SEQUENCE;
                 end
 
-                // --- STATE 2: Playback Simon's Sequence with Lights ---
+                // --- STATE 3: Playback Simon's Sequence with Lights ---
                 PLAY_SIMON_SEQUENCE: begin
                     input_lockout <= 1'b1;
                     generic_timer <= generic_timer + 1'b1;
@@ -113,7 +124,7 @@ module simon_fsm (
                     end
                 end
 
-                // --- STATE 3: User Response Capture with 2-Second Watchdog ---
+                // --- STATE 4: User Response Capture with 2-Second Watchdog ---
                 ENTER_LISTENING_MODE: begin
                     input_lockout <= 1'b0; // Release lockout to accept clicks
 
@@ -142,7 +153,7 @@ module simon_fsm (
                     end
                 end
 
-                // --- STATE 4: Evaluate Player's Entry vs Simon's Memory Matrix ---
+                // --- STATE 5: Evaluate Player's Entry vs Simon's Memory Matrix ---
                 CHECK_MATCH: begin
                     input_lockout <= 1'b1;
                     
@@ -176,7 +187,7 @@ module simon_fsm (
                     generic_timer <= 0;
                 end
 
-                // --- STATES 5, 6, 7: Audio Chime Sequence Durations ---
+                // --- STATE 6: Audio Chime Sequence Durations (Failure) ---
                 PLAY_WAWAWA: begin
                     generic_timer <= generic_timer + 1'b1;
                     if (generic_timer >= 25'd8_999_999) begin // ~750ms failure duration
@@ -185,6 +196,7 @@ module simon_fsm (
                     end
                 end
 
+                // --- STATE 7: Audio Chime Sequence Durations (Success Round) ---
                 PLAY_TADA: begin
                     generic_timer <= generic_timer + 1'b1;
                     if (generic_timer >= 25'd5_999_999) begin // ~500ms success duration
@@ -193,6 +205,7 @@ module simon_fsm (
                     end
                 end
 
+                // --- STATE 8: Audio Chime Sequence Durations (Victory Game Completed) ---
                 PLAY_EXTENDED_TATA: begin
                     generic_timer <= generic_timer + 1'b1;
                     if (generic_timer >= 25'd17_999_999) begin // ~1.5s victory jingle
@@ -201,7 +214,7 @@ module simon_fsm (
                     end
                 end
 
-                // --- STATE 8: Enforce 2 Seconds of Absolute System Silence ---
+                // --- STATE 9: Enforce 2 Seconds of Absolute System Silence ---
                 QUIET_STATE: begin
                     input_lockout <= 1'b1;
                     generic_timer <= generic_timer + 1'b1;
@@ -230,6 +243,7 @@ module simon_fsm (
     always @(*) begin
         case (state)
             PLAY_START_TONE:      arbitrated_key_code = 5'd16; // Audio plays via sequence counter, no lights
+            START_DELAY:          arbitrated_key_code = 5'd16; // Pure silence/dark pause before game start
             PLAY_SIMON_SEQUENCE:  arbitrated_key_code = simon_sequence[current_step]; // Show Simon's keys
             ENTER_LISTENING_MODE: arbitrated_key_code = matrix_key_code; // Show active presses live
             PLAY_WAWAWA:          arbitrated_key_code = 5'd17; // Route sound-only indices to mixers
