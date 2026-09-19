@@ -20,7 +20,8 @@ module simon_fsm (
 
     // Light Interface Feedback Bus Port Connections
     input      [3:0]  audio_play_step,
-    output reg [4:0]  simon_active_key
+    output reg [4:0]  simon_active_key,
+    output reg        play_at_half_speed, // NEW: Speed output wire to top.v
 
 );
 
@@ -248,6 +249,14 @@ module simon_fsm (
                 default: state <= STATE_BOOT_JINGLE;
             endcase
         end
+    end
+
+   // Drive the half speed flag exclusively when Simon is showcasing his sequence memory notes
+    always @(*) begin
+        if (state == STATE_SIMON_PLAYBACK)
+            play_at_half_speed = 1'b1; // Simon plays slow (~600ms)
+        else
+            play_at_half_speed = 1'b0; // Everything else (Tada, Startup, etc) plays fast (~300ms)
     end
 
 endmodule

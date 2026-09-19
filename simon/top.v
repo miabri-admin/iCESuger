@@ -39,6 +39,10 @@ module top (
     wire [4:0]   simon_active_key;  // The actual key coordinate value (0-15) Simon is reading
     reg  [4:0]   target_light_code; // Final multiplexed value sent to the LEDs
 
+
+    wire play_at_half_speed;
+
+
     // ---------------------------------------------------------------------
     // 1. Instantiation: Hardware Matrix Peripheral Scanner
     // ---------------------------------------------------------------------
@@ -76,7 +80,8 @@ module top (
         
         // NEW OUTPUT PORT: Exposes Simon's current target key code to top level
         .audio_play_step     (audio_play_step),
-        .simon_active_key    (simon_active_key)
+        .simon_active_key    (simon_active_key),
+        .play_at_half_speed (play_at_half_speed)
     );
 
     // ---------------------------------------------------------------------
@@ -91,7 +96,8 @@ module top (
         .sequence_done       (sequence_done),
         .active_key_index    (audio_play_step), // Hands raw step index pointer up to top.v
         .audio_l             (audio_l),
-        .audio_r             (audio_r)
+        .audio_r             (audio_r),
+        .play_at_half_speed (play_at_half_speed)
     );
 
     // ---------------------------------------------------------------------
