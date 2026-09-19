@@ -1,114 +1,42 @@
 // =========================================================================
-// DECOUPLED DTMF ENGINE WITH POWER-UP BOOT MELODY & WATCHDOG FIX
-// Matrix Scan = ~250Hz | Audio, Boot, & Watchdog Engines = 12MHz
+// FIXED UNIFIED MASTER CONTROLLER ENGINE (top.v)
+// Connects modules seamlessly without state/variable arbitration fights.
 // =========================================================================
 
 module top (
     input  clk,
     
-    // 4x4 Matrix Interface Pins
-    output reg test_out0, // Row 1
-    output reg test_out1, // Row 2
-    output reg test_out2, // Row 3
-    output reg test_out3, // Row 4
-    input      test_in0,  // Column 1
-    input      test_in1,  // Column 2
-    input      test_in2,  // Column 3
-    input      test_in3,  // Column 4
+    // Physical IO Traces routed directly through sub-modules
+    output test_out0, test_out1, test_out2, test_out3,
+    input  test_in0,  test_in1,  test_in2,  test_in3,
 
-    // Onboard Diagnostic Indicator LEDs (Active-Low)
-    output led_r,
-    output led_g,
-    output led_b,
-
-    // Audio Output Channels
-    output audio_l,       // Connects to PMOD2 Pin 1 (iCE40 Pin 46)
-    output audio_r        // Connects to PMOD2 Pin 2 (iCE40 Pin 44)
+    output led_r, led_g, led_b,
+    output audio_l, audio_r
 );
 
-    // ---------------------------------------------------------------------
-    // 1. Stable, Glitch-Free Row Multiplexer (Run at safe 250Hz rate)
-    // ---------------------------------------------------------------------
-    reg [1:0]  row_select = 2'b00; 
-    reg [15:0] scan_counter = 0;
-
-    always @(posedge clk) begin
-        if (scan_counter >= 16'd47999) begin 
-            scan_counter <= 0;
-            row_select   <= row_select + 1'b1; 
-        end else begin
-            scan_counter <= scan_counter + 1'b1;
-        end
-    end
-
-    // Active-Low 1-hot Row Multiplexer Sequence
-    always @(*) begin
-        case(row_select)
-            2'b00: begin test_out0 = 1'b0; test_out1 = 1'b1; test_out2 = 1'b1; test_out3 = 1'b1; end 
-            2'b01: begin test_out0 = 1'b1; test_out1 = 1'b0; test_out2 = 1'b1; test_out3 = 1'b1; end 
-            2'b10: begin test_out0 = 1'b1; test_out1 = 1'b1; test_out2 = 1'b0; test_out3 = 1'b1; end 
-            2'b11: begin test_out0 = 1'b1; test_out1 = 1'b1; test_out2 = 1'b1; test_out3 = 1'b0; end 
-        endcase
-    end
+    // Internal interconnecting wire routing links from scanner
+    wire [4:0] matrix_key_code;
+    wire       any_key_pressed;
 
     // ---------------------------------------------------------------------
-    // 2. FIXED: Continuous Capture Buffer with Active Clear
+    // 1. Instantiation of Isolated Keypad Scanner Module
     // ---------------------------------------------------------------------
-    wire [3:0] cols = {test_in3, test_in2, test_in1, test_in0};
-    reg [15:0] raw_keys = 16'd0;
-
-    always @(posedge clk) begin
-        // Clear old row traces completely when a new row is scanned to prevent key traps
-        case(row_select)
-            2'b00: begin
-                raw_keys[3:0]   <= ~cols;
-                raw_keys[15:4]  <= raw_keys[15:4]; // Keep others
-            end
-            2'b01: begin
-                raw_keys[7:4]   <= ~cols;
-                raw_keys[3:0]   <= raw_keys[3:0];
-                raw_keys[15:8]  <= raw_keys[15:8];
-            end
-            2'b10: begin
-                raw_keys[11:8]  <= ~cols;
-                raw_keys[7:0]   <= raw_keys[7:0];
-                raw_keys[15:12] <= raw_keys[15:12];
-            end
-            2'b11: begin
-                raw_keys[15:12] <= ~cols;
-                raw_keys[11:0]  <= raw_keys[11:0];
-            end
-        endcase
-    end
+    keypad_scanner u_keypad_scanner (
+        .clk             (clk),
+        .test_out0       (test_out0),
+        .test_out1       (test_out1),
+        .test_out2       (test_out2),
+        .test_out3       (test_out3),
+        .test_in0        (test_in0),
+        .test_in1        (test_in1),
+        .test_in2        (test_in2),
+        .test_in3        (test_in3),
+        .matrix_key_code (matrix_key_code),
+        .any_key_pressed (any_key_pressed)
+    );
 
     // ---------------------------------------------------------------------
-    // 3. Keypad Matrix Encoder Loop
-    // ---------------------------------------------------------------------
-    reg [4:0] matrix_key_code;
-    wire      any_key_pressed = (matrix_key_code != 5'd16);
-
-    always @(*) begin
-        if (raw_keys[0])        matrix_key_code = 5'd0;
-        else if (raw_keys[1])   matrix_key_code = 5'd1;
-        else if (raw_keys[2])   matrix_key_code = 5'd2;
-        else if (raw_keys[3])   matrix_key_code = 5'd3;
-        else if (raw_keys[4])   matrix_key_code = 5'd4;
-        else if (raw_keys[5])   matrix_key_code = 5'd5;
-        else if (raw_keys[6])   matrix_key_code = 5'd6;
-        else if (raw_keys[7])   matrix_key_code = 5'd7;
-        else if (raw_keys[8])   matrix_key_code = 5'd8;
-        else if (raw_keys[9])   matrix_key_code = 5'd9;
-        else if (raw_keys[10])  matrix_key_code = 5'd10;
-        else if (raw_keys[11])  matrix_key_code = 5'd11;
-        else if (raw_keys[12])  matrix_key_code = 5'd12;
-        else if (raw_keys[13])  matrix_key_code = 5'd13;
-        else if (raw_keys[14])  matrix_key_code = 5'd14;
-        else if (raw_keys[15])  matrix_key_code = 5'd15;
-        else                    matrix_key_code = 5'd16; 
-    end
-
-    // ---------------------------------------------------------------------
-    // 4. Power-Up Boot Sequencer State Machine
+    // 2. Power-Up Boot Sequencer State Machine
     // ---------------------------------------------------------------------
     reg [21:0] boot_timer = 0;   
     reg [2:0]  boot_state = 0;   
@@ -129,80 +57,130 @@ module top (
     end
 
     // ---------------------------------------------------------------------
-    // 5. 2-Second Inactivity Watchdog & Fail Sequencer
+    // 3. Code Tracker, Watchdog, & Chime Sequencer
     // ---------------------------------------------------------------------
     reg [24:0] watchdog_timer = 0;
+    reg [1:0]  input_count = 0; 
+    reg        last_pressed_state = 0;
+    
+    reg        tada_active = 0;
     reg        fail_active = 0;
-    reg [1:0]  fail_state = 0;
-    reg [22:0] fail_note_timer = 0;
-    reg        fail_played = 0; // NEW: Prevents infinite looping after completion
+    reg        chime_played = 0;
+    reg [1:0]  chime_state = 0;
+    reg [22:0] chime_note_timer = 0;
+    
+    // Explicit password slots to verify 1234
+    reg [4:0] slot0, slot1, slot2;
 
     always @(posedge clk) begin
         if (boot_active) begin
-            watchdog_timer  <= 0;
-            fail_active     <= 0;
-            fail_played     <= 0;
-        end else if (any_key_pressed) begin
-            // Reset watchdog and clear play lock flag if user touches keypad
-            watchdog_timer   <= 0;
-            fail_active      <= 0;
-            fail_state       <= 0;
-            fail_note_timer  <= 0;
-            fail_played      <= 0; 
-        end else if (!fail_active) begin
-            // Only count if failure has not already been played for this cycle
-            if (!fail_played) begin
-                if (watchdog_timer >= 25'd23_999_999) begin
-                    fail_active     <= 1'b1; 
-                    fail_state      <= 2'd0;
-                    watchdog_timer  <= 0;
-                end else begin
-                    watchdog_timer  <= watchdog_timer + 1'b1;
-                end
-            end else begin
-                watchdog_timer <= 0;
-            end
+            watchdog_timer      <= 0;
+            input_count         <= 0;
+            tada_active         <= 0;
+            fail_active         <= 0;
+            chime_played        <= 0;
+            last_pressed_state  <= 0;
+            slot0 <= 5'd16; slot1 <= 5'd16; slot2 <= 5'd16;
         end else begin
-            watchdog_timer  <= 0; 
-            fail_note_timer <= fail_note_timer + 1'b1;
-            if (fail_note_timer >= 23'd2_999_999) begin
-                fail_note_timer <= 0;
-                if (fail_state == 2'd2) begin
-                    fail_active    <= 1'b0; 
-                    fail_played    <= 1'b1; // Lock failure chime until next keypress
-                    watchdog_timer <= 0;    
-                end else begin
-                    fail_state     <= fail_state + 1'b1;
-                end
-            end
-        end
-    end
+            // Catch clean finger edges
+            last_pressed_state <= any_key_pressed;
 
-    // Master Key Arbitration Router
-    reg [4:0] active_key_code;
-    always @(*) begin
-        if (boot_active) begin
-            case(boot_state)
-                3'd0:    active_key_code = 5'd0;  
-                3'd1:    active_key_code = 5'd4;  
-                3'd2:    active_key_code = 5'd8;  
-                3'd3:    active_key_code = 5'd13; 
-                default: active_key_code = 5'd16; 
-            endcase
-        end else if (fail_active) begin
-            case(fail_state)
-                2'd0:    active_key_code = 5'd17; 
-                2'd1:    active_key_code = 5'd18; 
-                2'd2:    active_key_code = 5'd19; 
-                default: active_key_code = 5'd16;
-            endcase
-        end else begin
-            active_key_code = matrix_key_code; 
+            if (any_key_pressed) begin
+                watchdog_timer <= 0;
+                if (chime_played) begin
+                    chime_played <= 0; // Release lockouts when user starts typing again
+                    input_count  <= 0;
+                end
+            end
+
+            // --- ON FINGER RELEASE: Log code sequence ---
+            if (last_pressed_state && !any_key_pressed && !tada_active && !fail_active && !chime_played) begin
+                case (input_count)
+                    2'd0: begin slot0 <= matrix_key_code; input_count <= 2'd1; end
+                    2'd1: begin slot1 <= matrix_key_code; input_count <= 2'd2; end
+                    2'd2: begin slot2 <= matrix_key_code; input_count <= 2'd3; end
+                    2'd3: begin 
+                        // Verify absolute pattern status (1-2-3-4 entered)
+                        if (slot0 == 5'd0 && slot1 == 5'd1 && slot2 == 5'd2 && matrix_key_code == 5'd4) begin
+                            tada_active <= 1'b1;
+                        end else begin
+                            fail_active <= 1'b1;
+                        end
+                        input_count      <= 2'd0;
+                        chime_state      <= 2'd0;
+                        chime_note_timer <= 0;
+                    end
+                endcase
+            end
+
+            // --- WATCHDOG FAILURE TIMEOUT (2 SECONDS) ---
+            if (!any_key_pressed && !tada_active && !fail_active && !chime_played) begin
+                if (watchdog_timer >= 25'd23_999_999) begin 
+                    fail_active    <= 1'b1; 
+                    chime_state    <= 2'd0;
+                    watchdog_timer <= 0;
+                    input_count    <= 2'd0;
+                end else begin
+                    watchdog_timer <= watchdog_timer + 1'b1;
+                end
+            end
+
+            // --- ACTIVE SOUND EFFECT SEQUENCERS ---
+            if (tada_active || fail_active) begin
+                watchdog_timer   <= 0;
+                chime_note_timer <= chime_note_timer + 1'b1;
+                
+                if (chime_note_timer >= 23'd2_999_999) begin
+                    chime_note_timer <= 0;
+                    
+                    if ((tada_active && chime_state == 2'd1) || (fail_active && chime_state == 2'd2)) begin
+                        tada_active  <= 1'b0;
+                        fail_active  <= 1'b0;
+                        chime_played <= 1'b1; // Lock system into silent standby
+                        slot0 <= 5'd16; slot1 <= 5'd16; slot2 <= 5'd16;
+                    end else begin
+                        chime_state <= chime_state + 1'b1;
+                    end
+                end
+            end
         end
     end
 
     // ---------------------------------------------------------------------
-    // 6. REFACTORED: Isolated RGB Mixer Sub-Module Instantiation
+    // 4. SYNCHRONOUS ARBITRATION ROUTER (Fixed to hold matrix_key_code!)
+    // ---------------------------------------------------------------------
+    reg [4:0] active_key_code;
+    
+    always @(posedge clk) begin
+        if (boot_active) begin
+            case(boot_state)
+                3'd0:    active_key_code <= 5'd0;  
+                3'd1:    active_key_code <= 5'd4;  
+                3'd2:    active_key_code <= 5'd8;  
+                3'd3:    active_key_code <= 5'd13; 
+                default: active_key_code <= 5'd16; 
+            endcase
+        end else if (tada_active) begin
+            case(chime_state)
+                2'd0:    active_key_code <= 5'd20; 
+                2'd1:    active_key_code <= 5'd21; 
+                default: active_key_code <= 5'd16;
+            endcase
+        end else if (fail_active) begin
+            case(chime_state)
+                2'd0:    active_key_code <= 5'd17; 
+                2'd1:    active_key_code <= 5'd18; 
+                2'd2:    active_key_code <= 5'd19; 
+                default: active_key_code <= 5'd16;
+            endcase
+        end else begin
+            // FIXED: Locked into a registered always block to map directly to LEDs
+            active_key_code <= matrix_key_code; 
+        end
+    end
+
+    // ---------------------------------------------------------------------
+    // 5. Instantiation of Isolated RGB Mixer Module
     // ---------------------------------------------------------------------
     rgb_mixer u_rgb_mixer (
         .clk             (clk),
@@ -212,16 +190,8 @@ module top (
         .led_b           (led_b)
     );
 
-    reg [7:0] pwm_counter = 0;
-    always @(posedge clk) pwm_counter <= pwm_counter + 1'b1;
-    wire [1:0] pwm_frame = pwm_counter[7:6];
-
-    assign led_r = ~(r_val > pwm_frame);
-    assign led_g = ~(g_val > pwm_frame);
-    assign led_b = ~(b_val > pwm_frame);
-
     // ---------------------------------------------------------------------
-    // 7. DTMF Tone Frequency Selector Lookup Table
+    // 6. DTMF Tone Frequency Selector Lookup Table
     // ---------------------------------------------------------------------
     localparam ROW1_FREQ_697  = 14'd8608;
     localparam ROW2_FREQ_770  = 14'd7792;
@@ -262,12 +232,15 @@ module top (
             5'd18:   begin row_max = ROW3_FREQ_852; col_max = 14'd0;         end
             5'd19:   begin row_max = ROW2_FREQ_770; col_max = 14'd0;         end
             
+            5'd20:   begin row_max = 14'd3000;      col_max = 14'd0;         end 
+            5'd21:   begin row_max = 14'd2000;      col_max = 14'd0;         end 
+            
             default: begin row_max = 14'd0;         col_max = 14'd0;         end
         endcase
     end
 
     // ---------------------------------------------------------------------
-    // 8. Running Audio Oscillators
+    // 7. Running Audio Oscillators
     // ---------------------------------------------------------------------
     reg [13:0] row_counter = 0;
     reg [13:0] col_counter = 0;
@@ -297,10 +270,13 @@ module top (
     end
 
     // ---------------------------------------------------------------------
-    // 9. Passive Audio Mixer & Output Pin Mapping
+    // 8. Passive Audio Mixer & Output Pin Mapping
     // ---------------------------------------------------------------------
     reg mix_toggle = 0;
-    always @(posedge clk) mix_toggle <= ~mix_toggle;
+    
+    always @(posedge clk) begin
+        mix_toggle <= ~mix_toggle;
+    end
 
     wire blended_audio = mix_toggle ? row_square : col_square;
 
