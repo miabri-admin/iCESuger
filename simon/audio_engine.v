@@ -1,6 +1,7 @@
 // =========================================================================
 // UNIVERSAL ARRAY-BASED SEQUENCE AUDIO DRIVER (audio_engine.v)
-// Plays a custom loaded matrix block array up to 12 notes sequentially.
+// Plays a loaded 12-note sequence array block sequentially.
+// FIXED: Interlocked handshake prevents single-cycle double-triggering.
 // =========================================================================
 
 module audio_engine (
@@ -8,58 +9,79 @@ module audio_engine (
     input             play_trigger,      // Set High to start playing the array
     input      [3:0]  sequence_length,   // Total notes loaded into array (1 to 12)
     
-    // Flat-mapped input busses to accept the loaded 12-note sequence array blocks
-    // 12 notes * 14-bits per frequency channel = 168 bits total width
     input      [167:0] shared_sequence_r, 
     input      [167:0] shared_sequence_c,
 
     output reg        sequence_done,     // Handshake signal sent back to Tier 1
     output            audio_l, audio_r,  // Physical audio outputs
-    output reg [4:0]  active_key_index   // Kept for lighting synchronization
+    output     [3:0]  active_key_index   
 );
 
-    // ---------------------------------------------------------------------
-    // 1. Playback Step Sequencer State Machine
-    // ---------------------------------------------------------------------
+    // Playback Step Sequencer Registers
     reg [3:0]  play_index = 0;
     reg [23:0] note_timer = 0;
-    reg        is_playing = 0;
+    
+    // Internal Playback State Engine States
+    localparam AUDIO_IDLE  = 2'd0;
+    localparam AUDIO_PLAY  = 2'd1;
+    localparam AUDIO_DONE  = 2'd2;
+    reg [1:0]  audio_state = AUDIO_IDLE;
 
-    // Slices out the active 14-bit frequency windows from the combined input array buses
     reg [13:0] row_max;
     reg [13:0] col_max;
 
-    always @(posedge clk) begin
-        if (play_trigger && !is_playing) begin
-            is_playing    <= 1'b1;
-            play_index    <= 0;
-            note_timer    <= 0;
-            sequence_done <= 1'b0;
-        end else if (is_playing) begin
-            note_timer <= note_timer + 1'b1;
-            
-            // Extract the targeted note frequency from our shared array bus blocks
-            row_max <= shared_sequence_r[(play_index * 14) +: 14];
-            col_max <= shared_sequence_c[(play_index * 14) +: 14];
+    assign active_key_index = play_index;
 
-            if (note_timer >= 24'd3_599_999) begin // ~300ms note duration
-                note_timer <= 0;
-                if (play_index >= (sequence_length - 1'b1)) begin
-                    is_playing    <= 1'b0;
-                    sequence_done <= 1'b1; // Trigger jump back up in state hierarchy
-                end else begin
-                    play_index <= play_index + 1'b1;
+    always @(posedge clk) begin
+        case (audio_state)
+            // Wait safely for the rising edge of play_trigger
+            AUDIO_IDLE: begin
+                sequence_done <= 1'b0;
+                play_index    <= 0;
+                note_timer    <= 0;
+                row_max       <= 14'd0;
+                col_max       <= 14'd0;
+                if (play_trigger) begin
+                    audio_state <= AUDIO_PLAY;
                 end
             end
-        end else begin
-            row_max       <= 14'd0;
-            col_max       <= 14'd0;
-            sequence_done <= 1'b0;
-        end
+
+            // Run through the loaded notes sequentially
+            AUDIO_PLAY: begin
+                note_timer <= note_timer + 1'b1;
+                row_max    <= shared_sequence_r[(play_index * 14) +: 14];
+                col_max    <= shared_sequence_c[(play_index * 14) +: 14];
+
+                if (note_timer >= 24'd3_599_999) begin // ~300ms note duration
+                    note_timer <= 0;
+                    if (play_index >= (sequence_length - 1'b1)) begin
+                        sequence_done <= 1'b1; // Signal done to main FSM
+                        audio_state   <= AUDIO_DONE; // Transition to interlock hold
+                    end else begin
+                        play_index <= play_index + 1'b1;
+                    end
+                end
+            end
+
+            // FIXED INTERLOCK STATE: Keep sequence_done high until play_trigger drops to 0.
+            // This absorbs the 1-cycle propagation delay and prevents instant double plays!
+            AUDIO_DONE: begin
+                row_max <= 14'd0;
+                col_max <= 14'd0;
+                if (!play_trigger) begin
+                    sequence_done <= 1'b0;
+                    audio_state   <= AUDIO_IDLE; // Safely return to standby
+                end else begin
+                    sequence_done <= 1'b1;
+                end
+            end
+            
+            default: audio_state <= AUDIO_IDLE;
+        endcase
     end
 
     // ---------------------------------------------------------------------
-    // 2. Continuous Running Oscillators & Passive Interleave Multi-plexer
+    // 2. Continuous Running Oscillators & Passive Interleave Multiplexer
     // ---------------------------------------------------------------------
     reg [13:0] row_counter = 0; reg [13:0] col_counter = 0;
     reg        row_square = 0;  reg        col_square = 0;

@@ -16,7 +16,12 @@ module simon_fsm (
     output reg [167:0] out_seq_c,
     input             sequence_done,
 
-    output reg        input_lockout
+    output reg        input_lockout,
+
+    // Light Interface Feedback Bus Port Connections
+    input      [3:0]  audio_play_step,
+    output reg [4:0]  simon_active_key
+
 );
 
     // Core DTMF Fixed Constant frequency blocks
@@ -38,12 +43,14 @@ module simon_fsm (
     reg [3:0]  state = STATE_BOOT_JINGLE;
     reg [24:0] delay_timer = 0;
 
-    // Game variables
+   // Game variables
     reg [3:0]  level_length = 4'd3;
     reg [4:0]  game_memory_sequence [0:11];
 
+
+
     // ---------------------------------------------------------------------
-    // Master State Engine
+    // Master State Engine Main Loop Block
     // ---------------------------------------------------------------------
     always @(posedge clk) begin
         if (reset) begin
@@ -90,19 +97,33 @@ module simon_fsm (
                 end
 
                 // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
+                // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
                 STATE_SIMON_PLAYBACK: begin
-                    playback_length <= level_length;
+                    playback_length <= 4'd12; // Test Override: Full 12 note run
                     
-                    // Simple programmatic mapping loops through the current dynamic game memory array lengths
-                    // translating the indices directly into frequency signals over our bus
-                    out_seq_r[0  +: 14] <= R1; out_seq_c[0  +: 14] <= C1; // Key 1 frequencies
-                    out_seq_r[14 +: 14] <= R2; out_seq_c[14 +: 14] <= C2; // Key 5 frequencies
-                    out_seq_r[28 +: 14] <= R3; out_seq_c[28 +: 14] <= C3; // Key 9 frequencies
+                    // Keep the light code explicitly synchronized to the audio engine's active step pointer
+                    simon_active_key <= game_memory_sequence[audio_play_step];
 
-                    play_trigger <= 1'b1;
+                    // Parallel Bus Data Vector Assignments
+                    out_seq_r[0   +: 14] <= R1; out_seq_c[0   +: 14] <= C1; 
+                    out_seq_r[14  +: 14] <= R2; out_seq_c[14  +: 14] <= C2; 
+                    out_seq_r[28  +: 14] <= R3; out_seq_c[28  +: 14] <= C3; 
+                    out_seq_r[42  +: 14] <= R4; out_seq_c[42  +: 14] <= C4; 
+                    out_seq_r[56  +: 14] <= R1; out_seq_c[56  +: 14] <= C2; 
+                    out_seq_r[70  +: 14] <= R2; out_seq_c[70  +: 14] <= C3; 
+                    out_seq_r[84  +: 14] <= R3; out_seq_c[84  +: 14] <= C4; 
+                    out_seq_r[98  +: 14] <= R4; out_seq_c[98  +: 14] <= C1; 
+                    out_seq_r[112 +: 14] <= R1; out_seq_c[112 +: 14] <= C3; 
+                    out_seq_r[126 +: 14] <= R2; out_seq_c[126 +: 14] <= C4; 
+                    out_seq_r[140 +: 14] <= R3; out_seq_c[140 +: 14] <= C1; 
+                    out_seq_r[154 +: 14] <= R4; out_seq_c[154 +: 14] <= C2; 
+
+                    play_trigger <= 1'b1; // Request playback start
+                    
                     if (sequence_done) begin
-                        play_trigger <= 1'b0;
-                        state        <= STATE_CHECK_ANSWER_DELAY; // Demo skip direct to delay state
+                        play_trigger     <= 1'b0; // Clean pull down request line
+                        simon_active_key <= 5'd16; // Turn off lights cleanly
+                        state            <= STATE_CHECK_ANSWER_DELAY; 
                     end
                 end
 
@@ -134,7 +155,7 @@ module simon_fsm (
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
                         delay_timer <= 0;
-                        state       <= STATE_BOOT_JINGLE; // Loop testing sequence safely
+                        state       <= STATE_BOOT_JINGLE; 
                     end
                 end
                 
