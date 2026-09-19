@@ -14,6 +14,20 @@ module top (
     output audio_l, audio_r
 );
 
+    localparam INIT_SEQ_LEN  = d3;
+
+    localparam MAX_SEQ_LEN = 12; // Use integer literal for array dimensions
+
+    // 2. The Random Game Sequence Array
+    // Holds 3 elements, where each slot is 5 bits wide (capable of storing 0-31)
+    reg [4:0] simon_sequence [0:MAX_SEQ_LEN-1];
+
+    // 3. The Player's Input Response Array
+    // Identical structural dimensions to match and compare against Simon
+    reg [4:0] player_sequence [0:MAX_SEQ_LEN-1];
+
+
+
     // Internal interconnecting wire routing links from scanner
     wire [4:0] matrix_key_code;
     wire       any_key_pressed;
