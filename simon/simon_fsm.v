@@ -47,6 +47,39 @@ module simon_fsm (
     reg [3:0]  level_length = 4'd3;
     reg [4:0]  game_memory_sequence [0:11];
 
+    // Extracts the active 14-bit frequency tokens playing on the bus right now
+    wire [13:0] active_row_freq = out_seq_r[(audio_play_step * 14) +: 14];
+    wire [13:0] active_col_freq = out_seq_c[(audio_play_step * 14) +: 14];
+
+    // Decode frequencies back to a 2-bit row index and 2-bit col index
+    reg [1:0] decoded_row;
+    reg [1:0] decoded_col;
+
+    always @(*) begin
+        // Row Decoder
+        if      (active_row_freq == R1) decoded_row = 2'd0;
+        else if (active_row_freq == R2) decoded_row = 2'd1;
+        else if (active_row_freq == R3) decoded_row = 2'd2;
+        else if (active_row_freq == R4) decoded_row = 2'd3;
+        else                            decoded_row = 2'd0;
+
+        // Column Decoder
+        if      (active_col_freq == C1) decoded_col = 2'd0;
+        else if (active_col_freq == C2) decoded_col = 2'd1;
+        else if (active_col_freq == C3) decoded_col = 2'd2;
+        else if (active_col_freq == C4) decoded_col = 2'd3;
+        else                            decoded_col = 2'd0;
+    end
+
+    // Clocked assignment maps (row * 4) + col dynamically to match the bus data
+    always @(posedge clk) begin
+        if (state == STATE_SIMON_PLAYBACK) begin
+            // Reconstructs the 0-15 layout index directly from the bus content!
+            simon_active_key <= (decoded_row * 3'd4) + decoded_col;
+        end else begin
+            simon_active_key <= 5'd16; // Standby / Off
+        end
+    end
 
 
     // ---------------------------------------------------------------------
@@ -101,9 +134,7 @@ module simon_fsm (
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= 4'd12; // Test Override: Full 12 note run
                     
-                    // Keep the light code explicitly synchronized to the audio engine's active step pointer
-                    simon_active_key <= game_memory_sequence[audio_play_step];
-
+                    
                     // Parallel Bus Data Vector Assignments
                     out_seq_r[0   +: 14] <= R1; out_seq_c[0   +: 14] <= C1; 
                     out_seq_r[14  +: 14] <= R2; out_seq_c[14  +: 14] <= C2; 
@@ -122,7 +153,6 @@ module simon_fsm (
                     
                     if (sequence_done) begin
                         play_trigger     <= 1'b0; // Clean pull down request line
-                        simon_active_key <= 5'd16; // Turn off lights cleanly
                         state            <= STATE_CHECK_ANSWER_DELAY; 
                     end
                 end
