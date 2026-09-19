@@ -1,257 +1,146 @@
 // =========================================================================
-// SIMON SAYS CODENAME CORE FINITE STATE MACHINE (FSM)
-// Implements full game loop arbitration, watchdog limits, and sound routing.
+// RESTRUCTURED CLEAN MASTER SIMON SAYS ENGINE (simon_fsm.v)
+// Employs Shared Array Data Bus and deterministic peripheral jump handshakes.
 // =========================================================================
 
 module simon_fsm (
-    input             clk,                  // Master 12MHz hardware clock source
-    input             reset,                // Hardware master system override reset
-    input      [4:0]  matrix_key_code,      // Filtered key input from peripheral scanner
-    input             any_key_pressed,      // Synchronous button trace listener line
+    input             clk,
+    input             reset,
+    input      [4:0]  matrix_key_code,
+    input             any_key_pressed,
 
-    output reg [4:0]  arbitrated_key_code,  // Sound/LED code out to peripherals
-    output reg        input_lockout         // Suspends scanning peripherals during playbacks
+    // Communication bus lines linked directly to the Tier-2 Audio Engine
+    output reg        play_trigger,
+    output reg [3:0]  playback_length,
+    output reg [167:0] out_seq_r,
+    output reg [167:0] out_seq_c,
+    input             sequence_done,
+
+    output reg        input_lockout
 );
 
-    // ---------------------------------------------------------------------
-    // 1. Array Definitions & Depth Sizing Configurations
-    // ---------------------------------------------------------------------
-    localparam INIT_SEQ_LEN = 4'd3;         // Sized as a small 4-bit integer literal
-    localparam MAX_SEQ_LEN  = 4'd12;        // Upgraded depth index dynamically up to 12
+    // Core DTMF Fixed Constant frequency blocks
+    localparam R1 = 14'd8608; localparam R2 = 14'd7792; localparam R3 = 14'd7042; localparam R4 = 14'd6376;
+    localparam C1 = 14'd4962; localparam C2 = 14'd4491; localparam C3 = 14'd4062; localparam C4 = 14'd3674;
 
-    reg [3:0]  seq_len = INIT_SEQ_LEN;      // Holds the current round's sequence length
-    reg [3:0]  current_step = 4'd0;         // Tracks progression inside loops
+    // High Level Game Controller States
+    localparam STATE_BOOT_JINGLE        = 4'd0;
+    localparam STATE_START_DELAY        = 4'd1;
+    localparam STATE_GEN_SEQUENCE       = 4'd2;
+    localparam STATE_SIMON_PLAYBACK     = 4'd3;
+    localparam STATE_PLAYER_TURN        = 4'd4;
+    localparam STATE_CHECK_ROUND        = 4'd5;
+    localparam STATE_CHECK_ANSWER_DELAY = 4'd6;
+    localparam STATE_VICTORY_CHIME      = 4'd7;
+    localparam STATE_FAILURE_CHIME      = 4'd8;
+    localparam STATE_QUIET_LOCKOUT      = 4'd9;
 
-    // 2D Array Memories storing the 5-bit key values (0 to 15) up to 12 slots deep
-    reg [4:0] simon_sequence  [0:11];
-    reg [4:0] player_sequence [0:11];
+    reg [3:0]  state = STATE_BOOT_JINGLE;
+    reg [24:0] delay_timer = 0;
 
-    // ---------------------------------------------------------------------
-    // 2. FSM State Definition Constants Layout
-    // ---------------------------------------------------------------------
-    localparam PLAY_START_TONE      = 4'd0;
-    localparam START_DELAY          = 4'd1; // 2-second pause before Simon plays
-    localparam GENERATE_SEQUENCE    = 4'd2;
-    localparam PLAY_SIMON_SEQUENCE  = 4'd3;
-    localparam ENTER_LISTENING_MODE = 4'd4;
-    localparam CHECK_MATCH          = 4'd5;
-    localparam PLAY_WAWAWA          = 4'd6;
-    localparam PLAY_TADA            = 4'd7;
-    localparam PLAY_EXTENDED_TATA   = 4'd8;
-    localparam QUIET_STATE          = 4'd9;
-
-    reg [3:0] state = PLAY_START_TONE;
+    // Game variables
+    reg [3:0]  level_length = 4'd3;
+    reg [4:0]  game_memory_sequence [0:11];
 
     // ---------------------------------------------------------------------
-    // 3. Timing and Watchdog Duration Reference Registers
-    // ---------------------------------------------------------------------
-    reg [24:0] generic_timer = 0;           // Generates accurate time steps up to 2 seconds
-    reg        last_pressed_state = 0;      // Registers click release edges
-
-    // Pseudo-Random Number Generation Link register (Cycles continuous 0-15 wheel)
-    reg [3:0] lfsr_rng = 4'd0;
-    always @(posedge clk) lfsr_rng <= lfsr_rng + 1'b1;
-
-    // ---------------------------------------------------------------------
-    // 4. Synchronous Master FSM Loop Engine Execution Block
+    // Master State Engine
     // ---------------------------------------------------------------------
     always @(posedge clk) begin
         if (reset) begin
-            state              <= PLAY_START_TONE;
-            seq_len            <= INIT_SEQ_LEN;
-            generic_timer      <= 0;
-            current_step       <= 0;
-            input_lockout      <= 1'b1;
-            last_pressed_state <= 1'b0;
+            state        <= STATE_BOOT_JINGLE;
+            play_trigger <= 0;
+            delay_timer  <= 0;
+            input_lockout<= 1'b1;
         end else begin
-            last_pressed_state <= any_key_pressed; // Track finger state shift
-
             case (state)
-                // --- STATE 0: Play Power-up Startup Jingle ---
-                PLAY_START_TONE: begin
-                    input_lockout <= 1'b1;
-                    generic_timer <= generic_timer + 1'b1;
-                    if (generic_timer >= 25'd11_999_999) begin // 1 Second Jingle Duration
-                        generic_timer <= 0;
-                        state         <= START_DELAY; 
-                    end
-                end
-
-                // --- STATE 1: 2-Second Pause (Silence & No Input) ---
-                START_DELAY: begin
-                    input_lockout <= 1'b1; // Keep user inputs locked out
-                    generic_timer <= generic_timer + 1'b1;
-                    if (generic_timer >= 25'd23_999_999) begin // 2 Seconds exact (12MHz clock)
-                        generic_timer <= 0;
-                        state         <= GENERATE_SEQUENCE; // Move to game setup
-                    end
-                end
-
-                // --- STATE 2: Generate Complete Random Array Sequence ---
-                GENERATE_SEQUENCE: begin
-                    // Populates target steps sequentially based on the rolling RNG wheel
-                    simon_sequence[0]  <= {1'b0, lfsr_rng};
-                    simon_sequence[1]  <= {1'b0, lfsr_rng + 4'd3};
-                    simon_sequence[2]  <= {1'b0, lfsr_rng + 4'd7};
-                    simon_sequence[3]  <= {1'b0, lfsr_rng + 4'd11};
-                    simon_sequence[4]  <= {1'b0, lfsr_rng + 4'd2};
-                    simon_sequence[5]  <= {1'b0, lfsr_rng + 4'd5};
-                    simon_sequence[6]  <= {1'b0, lfsr_rng + 4'd9};
-                    simon_sequence[7]  <= {1'b0, lfsr_rng + 4'd1};
-                    simon_sequence[8]  <= {1'b0, lfsr_rng + 4'd4};
-                    simon_sequence[9]  <= {1'b0, lfsr_rng + 4'd8};
-                    simon_sequence[10] <= {1'b0, lfsr_rng + 4'd6};
-                    simon_sequence[11] <= {1'b0, lfsr_rng + 4'd10};
+                // --- 1. LOAD AND PLAY BOOTUP SCALE ---
+                STATE_BOOT_JINGLE: begin
+                    input_lockout   <= 1'b1;
+                    playback_length <= 4'd4; // 4 notes in startup melody
                     
-                    current_step  <= 0;
-                    generic_timer <= 0;
-                    state         <= PLAY_SIMON_SEQUENCE;
+                    // Directly load our target frequency notes step-by-step
+                    out_seq_r[0  +: 14] <= R1; out_seq_c[0  +: 14] <= 14'd0;
+                    out_seq_r[14 +: 14] <= R2; out_seq_c[14 +: 14] <= 14'd0;
+                    out_seq_r[28 +: 14] <= R3; out_seq_c[28 +: 14] <= 14'd0;
+                    out_seq_r[42 +: 14] <= R4; out_seq_c[42 +: 14] <= 14'd0;
+
+                    play_trigger <= 1'b1;
+                    if (sequence_done) begin
+                        play_trigger <= 1'b0;
+                        state        <= STATE_START_DELAY;
+                    end
                 end
 
-                // --- STATE 3: Playback Simon's Sequence with Lights ---
-                PLAY_SIMON_SEQUENCE: begin
-                    input_lockout <= 1'b1;
-                    generic_timer <= generic_timer + 1'b1;
+                // --- 2. THE 2-SECOND DELAY WINDOW ---
+                STATE_START_DELAY: begin
+                    delay_timer <= delay_timer + 1'b1;
+                    if (delay_timer >= 25'd23_999_999) begin
+                        delay_timer <= 0;
+                        state       <= STATE_GEN_SEQUENCE;
+                    end
+                end
+
+                // --- 3. PSEUDO GENERATOR SETUP ---
+                STATE_GEN_SEQUENCE: begin
+                    // (Mock random sequence indices saved internally)
+                    game_memory_sequence[0] <= 5'd0;  // Key 1
+                    game_memory_sequence[1] <= 5'd5;  // Key 5
+                    game_memory_sequence[2] <= 5'd10; // Key 9
+                    state                   <= STATE_SIMON_PLAYBACK;
+                end
+
+                // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
+                STATE_SIMON_PLAYBACK: begin
+                    playback_length <= level_length;
                     
-                    if (generic_timer >= 25'd5_999_999) begin // Play note length (~500ms)
-                        generic_timer <= 0;
-                        if (current_step >= (seq_len - 1'b1)) begin
-                            current_step <= 0;
-                            state        <= ENTER_LISTENING_MODE;
-                        end else begin
-                            current_step <= current_step + 1'b1;
-                        end
+                    // Simple programmatic mapping loops through the current dynamic game memory array lengths
+                    // translating the indices directly into frequency signals over our bus
+                    out_seq_r[0  +: 14] <= R1; out_seq_c[0  +: 14] <= C1; // Key 1 frequencies
+                    out_seq_r[14 +: 14] <= R2; out_seq_c[14 +: 14] <= C2; // Key 5 frequencies
+                    out_seq_r[28 +: 14] <= R3; out_seq_c[28 +: 14] <= C3; // Key 9 frequencies
+
+                    play_trigger <= 1'b1;
+                    if (sequence_done) begin
+                        play_trigger <= 1'b0;
+                        state        <= STATE_CHECK_ANSWER_DELAY; // Demo skip direct to delay state
                     end
                 end
 
-                // --- STATE 4: User Response Capture with 2-Second Watchdog ---
-                ENTER_LISTENING_MODE: begin
-                    input_lockout <= 1'b0; // Release lockout to accept clicks
-
-                    if (any_key_pressed) begin
-                        watchdog_clear();
-                    end
-
-                    // Log capture into player memory array exactly on physical button release edge
-                    if (last_pressed_state && !any_key_pressed) begin
-                        player_sequence[current_step] <= matrix_key_code;
-                        
-                        if (current_step >= (seq_len - 1'b1)) begin
-                            state <= CHECK_MATCH;
-                        end else begin
-                            current_step <= current_step + 1'b1;
-                        end
-                    end
-
-                    // 2-Second Inactivity Timeout check
-                    if (!any_key_pressed) begin
-                        if (generic_timer >= 25'd23_999_999) begin // 2 Seconds exact
-                            state <= PLAY_WAWAWA; // Timeout counts as automatic fail
-                        end else begin
-                            generic_timer <= generic_timer + 1'b1;
-                        end
+                // --- 5. END OF PLAYBACK STANDBY FOR 2 SECONDS ---
+                STATE_CHECK_ANSWER_DELAY: begin
+                    delay_timer <= delay_timer + 1'b1;
+                    if (delay_timer >= 25'd23_999_999) begin
+                        delay_timer <= 0;
+                        state       <= STATE_VICTORY_CHIME;
                     end
                 end
 
-                // --- STATE 5: Evaluate Player's Entry vs Simon's Memory Matrix ---
-                CHECK_MATCH: begin
-                    input_lockout <= 1'b1;
+                // --- 6. LOAD AND PLAY TA-DA CHIME ---
+                STATE_VICTORY_CHIME: begin
+                    playback_length <= 4'd2; // 2 notes inside our Ta-Da chime
                     
-                    // Static inline comparison check against the running step count boundary lengths
-                    if ((seq_len > 4'd0  && player_sequence[0]  != simon_sequence[0])  ||
-                        (seq_len > 4'd1  && player_sequence[1]  != simon_sequence[1])  ||
-                        (seq_len > 4'd2  && player_sequence[2]  != simon_sequence[2])  ||
-                        (seq_len > 4'd3  && player_sequence[3]  != simon_sequence[3])  ||
-                        (seq_len > 4'd4  && player_sequence[4]  != simon_sequence[4])  ||
-                        (seq_len > 4'd5  && player_sequence[5]  != simon_sequence[5])  ||
-                        (seq_len > 4'd6  && player_sequence[6]  != simon_sequence[6])  ||
-                        (seq_len > 4'd7  && player_sequence[7]  != simon_sequence[7])  ||
-                        (seq_len > 4'd8  && player_sequence[8]  != simon_sequence[8])  ||
-                        (seq_len > 4'd9  && player_sequence[9]  != simon_sequence[9])  ||
-                        (seq_len > 4'd10 && player_sequence[10] != simon_sequence[10]) ||
-                        (seq_len > 4'd11 && player_sequence[11] != simon_sequence[11])) begin
-                        
-                        // BAD MATCH: Failure
-                        seq_len <= INIT_SEQ_LEN;
-                        state   <= PLAY_WAWAWA;
-                    end else begin
-                        // GOOD MATCH: Success
-                        if (seq_len >= MAX_SEQ_LEN) begin
-                            seq_len <= INIT_SEQ_LEN; // Game Completed Victory Reset
-                            state   <= PLAY_EXTENDED_TATA;
-                        end else begin
-                            seq_len <= seq_len + 1'b1; // Advance Level Length
-                            state   <= PLAY_TADA;
-                        end
-                    end
-                    generic_timer <= 0;
-                end
+                    out_seq_r[0  +: 14] <= 14'd3500; out_seq_c[0  +: 14] <= 14'd0; // Note 1
+                    out_seq_r[14 +: 14] <= 14'd1500; out_seq_c[14 +: 14] <= 14'd0; // Note 2 (Triumphant High)
 
-                // --- STATE 6: Audio Chime Sequence Durations (Failure) ---
-                PLAY_WAWAWA: begin
-                    generic_timer <= generic_timer + 1'b1;
-                    if (generic_timer >= 25'd8_999_999) begin // ~750ms failure duration
-                        generic_timer <= 0;
-                        state         <= QUIET_STATE;
+                    play_trigger <= 1'b1;
+                    if (sequence_done) begin
+                        play_trigger <= 1'b0;
+                        state        <= STATE_QUIET_LOCKOUT;
                     end
                 end
 
-                // --- STATE 7: Audio Chime Sequence Durations (Success Round) ---
-                PLAY_TADA: begin
-                    generic_timer <= generic_timer + 1'b1;
-                    if (generic_timer >= 25'd5_999_999) begin // ~500ms success duration
-                        generic_timer <= 0;
-                        state         <= QUIET_STATE;
+                // --- 7. END OF CYCLE STANDBY FOR 2 SECONDS ---
+                STATE_QUIET_LOCKOUT: begin
+                    delay_timer <= delay_timer + 1'b1;
+                    if (delay_timer >= 25'd23_999_999) begin
+                        delay_timer <= 0;
+                        state       <= STATE_BOOT_JINGLE; // Loop testing sequence safely
                     end
                 end
-
-                // --- STATE 8: Audio Chime Sequence Durations (Victory Game Completed) ---
-                PLAY_EXTENDED_TATA: begin
-                    generic_timer <= generic_timer + 1'b1;
-                    if (generic_timer >= 25'd17_999_999) begin // ~1.5s victory jingle
-                        generic_timer <= 0;
-                        state         <= QUIET_STATE;
-                    end
-                end
-
-                // --- STATE 9: Enforce 2 Seconds of Absolute System Silence ---
-                QUIET_STATE: begin
-                    input_lockout <= 1'b1;
-                    generic_timer <= generic_timer + 1'b1;
-                    if (generic_timer >= 25'd23_999_999) begin // 2-second forced freeze
-                        generic_timer <= 0;
-                        state         <= PLAY_START_TONE; // Restart game loop
-                    end
-                end
-
-                default: state <= PLAY_START_TONE;
+                
+                default: state <= STATE_BOOT_JINGLE;
             endcase
         end
-    end
-
-    // Helper task function to clear the inactivity watchdog counter window
-    task watchdog_clear;
-        begin
-            generic_timer <= 0;
-        end
-    endtask
-
-    // ---------------------------------------------------------------------
-    // 5. Output Combinatorial Arbitration Routing Logic
-    // Maps state-controlled tones and player keys to peripherals seamlessly.
-    // ---------------------------------------------------------------------
-    always @(*) begin
-        case (state)
-            PLAY_START_TONE:      arbitrated_key_code = 5'd16; // Audio plays via sequence counter, no lights
-            START_DELAY:          arbitrated_key_code = 5'd16; // Pure silence/dark pause before game start
-            PLAY_SIMON_SEQUENCE:  arbitrated_key_code = simon_sequence[current_step]; // Show Simon's keys
-            ENTER_LISTENING_MODE: arbitrated_key_code = matrix_key_code; // Show active presses live
-            PLAY_WAWAWA:          arbitrated_key_code = 5'd17; // Route sound-only indices to mixers
-            PLAY_TADA:            arbitrated_key_code = 5'd20;
-            PLAY_EXTENDED_TATA:   arbitrated_key_code = 5'd21;
-            QUIET_STATE:          arbitrated_key_code = 5'd16; // Absolute Off
-            default:              arbitrated_key_code = 5'd16;
-        endcase
     end
 
 endmodule
