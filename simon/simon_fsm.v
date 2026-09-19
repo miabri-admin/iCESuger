@@ -21,7 +21,7 @@ module simon_fsm (
     // Light Interface Feedback Bus Port Connections
     input      [3:0]  audio_play_step,
     output reg [4:0]  simon_active_key,
-    output reg        play_at_half_speed, // NEW: Speed output wire to top.v
+    output reg        play_at_half_speed // NEW: Speed output wire to top.v
 
 );
 
