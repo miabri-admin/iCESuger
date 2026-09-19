@@ -202,33 +202,15 @@ module top (
     end
 
     // ---------------------------------------------------------------------
-    // 6. Visual PWM Color Mapping Engine
+    // 6. REFACTORED: Isolated RGB Mixer Sub-Module Instantiation
     // ---------------------------------------------------------------------
-    reg [1:0] r_val, g_val, b_val;
-    always @(*) begin
-        case (active_key_code)
-            5'd0:    begin r_val = 2'd3; g_val = 2'd0; b_val = 2'd0; end
-            5'd1:    begin r_val = 2'd0; g_val = 2'd3; b_val = 2'd0; end 
-            5'd2:    begin r_val = 2'd0; g_val = 2'd0; b_val = 2'd3; end 
-            5'd3:    begin r_val = 2'd3; g_val = 2'd3; b_val = 2'd0; end 
-            5'd4:    begin r_val = 2'd0; g_val = 2'd3; b_val = 2'd3; end 
-            5'd5:    begin r_val = 2'd3; g_val = 2'd0; b_val = 2'd3; end 
-            5'd6:    begin r_val = 2'd3; g_val = 2'd3; b_val = 2'd3; end 
-            5'd7:    begin r_val = 2'd1; g_val = 2'd1; b_val = 2'd1; end 
-            5'd8:    begin r_val = 2'd3; g_val = 2'd1; b_val = 2'd0; end 
-            5'd9:    begin r_val = 2'd1; g_val = 2'd3; b_val = 2'd0; end 
-            5'd10:   begin r_val = 2'd3; g_val = 2'd1; b_val = 2'd1; end 
-            5'd11:   begin r_val = 2'd1; g_val = 2'd0; b_val = 2'd3; end 
-            5'd12:   begin r_val = 2'd0; g_val = 2'd1; b_val = 2'd3; end 
-            5'd13:   begin r_val = 2'd0; g_val = 2'd2; b_val = 2'd1; end 
-            5'd14:   begin r_val = 2'd3; g_val = 2'd2; b_val = 2'd0; end 
-            5'd15:   begin r_val = 2'd2; g_val = 2'd0; b_val = 2'd2; end 
-            5'd17:   begin r_val = 2'd2; g_val = 2'd0; b_val = 2'd0; end 
-            5'd18:   begin r_val = 2'd1; g_val = 2'd0; b_val = 2'd0; end 
-            5'd19:   begin r_val = 2'd0; g_val = 2'd0; b_val = 2'd0; end 
-            default: begin r_val = 2'd0; g_val = 2'd0; b_val = 2'd0; end
-        endcase
-    end
+    rgb_mixer u_rgb_mixer (
+        .clk             (clk),
+        .active_key_code (active_key_code),
+        .led_r           (led_r),
+        .led_g           (led_g),
+        .led_b           (led_b)
+    );
 
     reg [7:0] pwm_counter = 0;
     always @(posedge clk) pwm_counter <= pwm_counter + 1'b1;
