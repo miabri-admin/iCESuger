@@ -40,6 +40,31 @@ module simon_fsm (
     localparam STATE_FAILURE_CHIME      = 4'd8;
     localparam STATE_QUIET_LOCKOUT      = 4'd9;
 
+
+
+    // ---------------------------------------------------------------------
+    // Hardware Pseudo-Random Number Generator (4-bit LFSR Engine)
+    // Cycles through a random pattern continuously at 12MHz.
+    // ---------------------------------------------------------------------
+    reg [3:0] lfsr_reg = 4'b1011; // Must be initialized to a non-zero value!
+
+    always @(posedge clk) begin
+        if (reset) begin
+            lfsr_reg <= 4'b1011;   // Seed value fallback
+        end else begin
+            // Tap configuration for a maximal-period 4-bit LFSR (Taps: bits 4 and 3)
+            lfsr_reg <= {lfsr_reg[2:0], lfsr_reg[3] ^ lfsr_reg[2]};
+        end
+    end
+
+    // Split the running 4-bit random register into two 2-bit selection indices
+    wire [1:0] rand_row_index = lfsr_reg[3:2];
+    wire [1:0] rand_col_index = lfsr_reg[1:0];
+
+    reg [3:0] gen_index = 0; // Tracks which array slot we are loading during setup
+
+
+
     reg [3:0]  state = STATE_BOOT_JINGLE;
     reg [24:0] delay_timer = 0;
 
@@ -129,34 +154,33 @@ module simon_fsm (
                 end
 
                 // --- 3. PSEUDO GENERATOR SETUP (Reworked to store frequency constants) ---
+                // --- 3. DYNAMIC GENERATOR SETUP: Populates all 12 slots randomly ---
                 STATE_GEN_SEQUENCE: begin
-                    // Slot 0 (Key 1)
-                    game_sequence_r[0]  <= R1; game_sequence_c[0]  <= C1;
-                    // Slot 1 (Key 5)
-                    game_sequence_r[1]  <= R2; game_sequence_c[1]  <= C2;
-                    // Slot 2 (Key 9)
-                    game_sequence_r[2]  <= R3; game_sequence_c[2]  <= C3;
-                    // Slot 3 (Key D)
-                    game_sequence_r[3]  <= R4; game_sequence_c[3]  <= C4;
-                    // Slot 4
-                    game_sequence_r[4]  <= R1; game_sequence_c[4]  <= C2;
-                    // Slot 5
-                    game_sequence_r[5]  <= R2; game_sequence_c[5]  <= C3;
-                    // Slot 6
-                    game_sequence_r[6]  <= R3; game_sequence_c[6]  <= C4;
-                    // Slot 7
-                    game_sequence_r[7]  <= R4; game_sequence_c[7]  <= C1;
-                    // Slot 8
-                    game_sequence_r[8]  <= R1; game_sequence_c[8]  <= C3;
-                    // Slot 9
-                    game_sequence_r[9]  <= R2; game_sequence_c[9]  <= C4;
-                    // Slot 10
-                    game_sequence_r[10] <= R3; game_sequence_c[10] <= C1;
-                    // Slot 11
-                    game_sequence_r[11] <= R4; game_sequence_c[11] <= C2;
+                    // 1. Map the running random row index to our frequency constants
+                    case (rand_row_index)
+                        2'd0:    game_sequence_r[gen_index] <= R1;
+                        2'd1:    game_sequence_r[gen_index] <= R2;
+                        2'd2:    game_sequence_r[gen_index] <= R3;
+                        2'd3:    game_sequence_r[gen_index] <= R4;
+                    endcase
 
-                    state <= STATE_SIMON_PLAYBACK;
+                    // 2. Map the running random column index to our frequency constants
+                    case (rand_col_index)
+                        2'd0:    game_sequence_c[gen_index] <= C1;
+                        2'd1:    game_sequence_c[gen_index] <= C2;
+                        2'd2:    game_sequence_c[gen_index] <= C3;
+                        2'd3:    game_sequence_c[gen_index] <= C4;
+                    endcase
+
+                    // 3. Step Sequencer Iterator Loop
+                    if (gen_index >= 4'd11) begin
+                        gen_index <= 0; // Array is fully loaded with random keys!
+                        state     <= STATE_SIMON_PLAYBACK; // Move to note playback
+                    end else begin
+                        gen_index <= gen_index + 1'b1; // Advance to the next slot
+                    end
                 end
+
 
                 // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY (Reworked to copy arrays) ---
                 STATE_SIMON_PLAYBACK: begin
