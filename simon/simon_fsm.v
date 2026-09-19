@@ -43,39 +43,47 @@ module simon_fsm (
     reg [3:0]  state = STATE_BOOT_JINGLE;
     reg [24:0] delay_timer = 0;
 
-   // Game variables
-    reg [3:0]  level_length = 4'd3;
-    reg [4:0]  game_memory_sequence [0:11];
+    // Game variables - Reworked into dedicated Row/Column memory arrays
+    // Sized to hold 12 slots of 14-bit frequency tokens
+    reg [13:0] game_sequence_r [0:11];
+    reg [13:0] game_sequence_c [0:11];
+    
+    reg [3:0]  level_length = 4'd12; // Adjusted to test all 12 entries
 
-    // Extracts the active 14-bit frequency tokens playing on the bus right now
-    wire [13:0] active_row_freq = out_seq_r[(audio_play_step * 14) +: 14];
-    wire [13:0] active_col_freq = out_seq_c[(audio_play_step * 14) +: 14];
 
-    // Decode frequencies back to a 2-bit row index and 2-bit col index
-    reg [1:0] decoded_row;
-    reg [1:0] decoded_col;
 
+    // ---------------------------------------------------------------------
+    // Parallel Array-to-Light Decoder Wire Mapping Links
+    // ---------------------------------------------------------------------
+    wire [13:0] current_step_r = game_sequence_r[audio_play_step];
+    wire [13:0] current_step_c = game_sequence_c[audio_play_step];
+
+    reg [1:0] light_row;
+    reg [1:0] light_col;
+
+    // Direct combinatorial decoding maps constants instantly to coordinates
     always @(*) begin
-        // Row Decoder
-        if      (active_row_freq == R1) decoded_row = 2'd0;
-        else if (active_row_freq == R2) decoded_row = 2'd1;
-        else if (active_row_freq == R3) decoded_row = 2'd2;
-        else if (active_row_freq == R4) decoded_row = 2'd3;
-        else                            decoded_row = 2'd0;
+        case (current_step_r)
+            R1:      light_row = 2'd0;
+            R2:      light_row = 2'd1;
+            R3:      light_row = 2'd2;
+            R4:      light_row = 2'd3;
+            default: light_row = 2'd0;
+        endcase
 
-        // Column Decoder
-        if      (active_col_freq == C1) decoded_col = 2'd0;
-        else if (active_col_freq == C2) decoded_col = 2'd1;
-        else if (active_col_freq == C3) decoded_col = 2'd2;
-        else if (active_col_freq == C4) decoded_col = 2'd3;
-        else                            decoded_col = 2'd0;
+        case (current_step_c)
+            C1:      light_col = 2'd0;
+            C2:      light_col = 2'd1;
+            C3:      light_col = 2'd2;
+            C4:      light_col = 2'd3;
+            default: light_col = 2'd0;
+        endcase
     end
 
-    // Clocked assignment maps (row * 4) + col dynamically to match the bus data
+    // Synchronous clock block locks down the clean active lighting output coordinate
     always @(posedge clk) begin
         if (state == STATE_SIMON_PLAYBACK) begin
-            // Reconstructs the 0-15 layout index directly from the bus content!
-            simon_active_key <= (decoded_row * 3'd4) + decoded_col;
+            simon_active_key <= (light_row * 3'd4) + light_col;
         end else begin
             simon_active_key <= 5'd16; // Standby / Off
         end
@@ -120,42 +128,62 @@ module simon_fsm (
                     end
                 end
 
-                // --- 3. PSEUDO GENERATOR SETUP ---
+                // --- 3. PSEUDO GENERATOR SETUP (Reworked to store frequency constants) ---
                 STATE_GEN_SEQUENCE: begin
-                    // (Mock random sequence indices saved internally)
-                    game_memory_sequence[0] <= 5'd0;  // Key 1
-                    game_memory_sequence[1] <= 5'd5;  // Key 5
-                    game_memory_sequence[2] <= 5'd10; // Key 9
-                    state                   <= STATE_SIMON_PLAYBACK;
+                    // Slot 0 (Key 1)
+                    game_sequence_r[0]  <= R1; game_sequence_c[0]  <= C1;
+                    // Slot 1 (Key 5)
+                    game_sequence_r[1]  <= R2; game_sequence_c[1]  <= C2;
+                    // Slot 2 (Key 9)
+                    game_sequence_r[2]  <= R3; game_sequence_c[2]  <= C3;
+                    // Slot 3 (Key D)
+                    game_sequence_r[3]  <= R4; game_sequence_c[3]  <= C4;
+                    // Slot 4
+                    game_sequence_r[4]  <= R1; game_sequence_c[4]  <= C2;
+                    // Slot 5
+                    game_sequence_r[5]  <= R2; game_sequence_c[5]  <= C3;
+                    // Slot 6
+                    game_sequence_r[6]  <= R3; game_sequence_c[6]  <= C4;
+                    // Slot 7
+                    game_sequence_r[7]  <= R4; game_sequence_c[7]  <= C1;
+                    // Slot 8
+                    game_sequence_r[8]  <= R1; game_sequence_c[8]  <= C3;
+                    // Slot 9
+                    game_sequence_r[9]  <= R2; game_sequence_c[9]  <= C4;
+                    // Slot 10
+                    game_sequence_r[10] <= R3; game_sequence_c[10] <= C1;
+                    // Slot 11
+                    game_sequence_r[11] <= R4; game_sequence_c[11] <= C2;
+
+                    state <= STATE_SIMON_PLAYBACK;
                 end
 
-                // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
-                // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
+                // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY (Reworked to copy arrays) ---
                 STATE_SIMON_PLAYBACK: begin
-                    playback_length <= 4'd12; // Test Override: Full 12 note run
-                    
-                    
-                    // Parallel Bus Data Vector Assignments
-                    out_seq_r[0   +: 14] <= R1; out_seq_c[0   +: 14] <= C1; 
-                    out_seq_r[14  +: 14] <= R2; out_seq_c[14  +: 14] <= C2; 
-                    out_seq_r[28  +: 14] <= R3; out_seq_c[28  +: 14] <= C3; 
-                    out_seq_r[42  +: 14] <= R4; out_seq_c[42  +: 14] <= C4; 
-                    out_seq_r[56  +: 14] <= R1; out_seq_c[56  +: 14] <= C2; 
-                    out_seq_r[70  +: 14] <= R2; out_seq_c[70  +: 14] <= C3; 
-                    out_seq_r[84  +: 14] <= R3; out_seq_c[84  +: 14] <= C4; 
-                    out_seq_r[98  +: 14] <= R4; out_seq_c[98  +: 14] <= C1; 
-                    out_seq_r[112 +: 14] <= R1; out_seq_c[112 +: 14] <= C3; 
-                    out_seq_r[126 +: 14] <= R2; out_seq_c[126 +: 14] <= C4; 
-                    out_seq_r[140 +: 14] <= R3; out_seq_c[140 +: 14] <= C1; 
-                    out_seq_r[154 +: 14] <= R4; out_seq_c[154 +: 14] <= C2; 
+                    playback_length <= level_length; 
+
+                    // Directly copy our memory arrays over to the parallel bus channels
+                    out_seq_r[0   +: 14] <= game_sequence_r[0];  out_seq_c[0   +: 14] <= game_sequence_c[0];
+                    out_seq_r[14  +: 14] <= game_sequence_r[1];  out_seq_c[14  +: 14] <= game_sequence_c[1];
+                    out_seq_r[28  +: 14] <= game_sequence_r[2];  out_seq_c[28  +: 14] <= game_sequence_c[2];
+                    out_seq_r[42  +: 14] <= game_sequence_r[3];  out_seq_c[42  +: 14] <= game_sequence_c[3];
+                    out_seq_r[56  +: 14] <= game_sequence_r[4];  out_seq_c[56  +: 14] <= game_sequence_c[4];
+                    out_seq_r[70  +: 14] <= game_sequence_r[5];  out_seq_c[70  +: 14] <= game_sequence_c[5];
+                    out_seq_r[84  +: 14] <= game_sequence_r[6];  out_seq_c[84  +: 14] <= game_sequence_c[6];
+                    out_seq_r[98  +: 14] <= game_sequence_r[7];  out_seq_c[98  +: 14] <= game_sequence_c[7];
+                    out_seq_r[112 +: 14] <= game_sequence_r[8];  out_seq_c[112 +: 14] <= game_sequence_c[8];
+                    out_seq_r[126 +: 14] <= game_sequence_r[9];  out_seq_c[126 +: 14] <= game_sequence_c[9];
+                    out_seq_r[140 +: 14] <= game_sequence_r[10]; out_seq_c[140 +: 14] <= game_sequence_c[10];
+                    out_seq_r[154 +: 14] <= game_sequence_r[11]; out_seq_c[154 +: 14] <= game_sequence_c[11];
 
                     play_trigger <= 1'b1; // Request playback start
                     
                     if (sequence_done) begin
-                        play_trigger     <= 1'b0; // Clean pull down request line
-                        state            <= STATE_CHECK_ANSWER_DELAY; 
+                        play_trigger <= 1'b0; // Clean pull down request line
+                        state        <= STATE_CHECK_ANSWER_DELAY; 
                     end
                 end
+
 
                 // --- 5. END OF PLAYBACK STANDBY FOR 2 SECONDS ---
                 STATE_CHECK_ANSWER_DELAY: begin
