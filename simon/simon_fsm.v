@@ -73,7 +73,11 @@ module simon_fsm (
     reg [13:0] game_sequence_r [0:11];
     reg [13:0] game_sequence_c [0:11];
     
-    reg [3:0]  level_length = 4'd12; // Adjusted to test all 12 entries
+    localparam INIT_SEQ_LEN = 4'd3;         // Sized as a small 4-bit integer literal
+    localparam MAX_SEQ_LEN  = 4'd12;        // Upgraded depth index dynamically up to 12
+
+
+    reg [3:0]  seq_len = INIT_SEQ_LEN; // Adjusted to test all 12 entries
 
 
 
@@ -184,7 +188,7 @@ module simon_fsm (
 
                 // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY (Reworked to copy arrays) ---
                 STATE_SIMON_PLAYBACK: begin
-                    playback_length <= level_length; 
+                    playback_length <= seq_len; 
 
                     // Directly copy our memory arrays over to the parallel bus channels
                     out_seq_r[0   +: 14] <= game_sequence_r[0];  out_seq_c[0   +: 14] <= game_sequence_c[0];
