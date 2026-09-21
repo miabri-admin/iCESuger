@@ -12,8 +12,8 @@ module simon_fsm (
     // Communication bus lines linked directly to the Tier-2 Audio Engine
     output reg        play_trigger,
     output reg [3:0]  playback_length,
-    output reg [167:0] simon_seq_r,
-    output reg [167:0] simon_seq_c,
+    output reg [167:0] simon_seq_r,        
+    output reg [167:0] simon_seq_c,        
     input             sequence_done,
 
     output reg        input_lockout,
@@ -23,7 +23,7 @@ module simon_fsm (
     output reg [4:0]  simon_active_key,
     output reg        play_in_simon_mode,
 
-    input             final_key_released  // Trigger from inactivity scanner
+    input             final_key_released  // Terminal 2-second timeout trigger
 );
 
     // Core DTMF Fixed Constant frequency blocks
@@ -44,37 +44,47 @@ module simon_fsm (
 
     // ---------------------------------------------------------------------
     // Hardware Pseudo-Random Number Generator (4-bit LFSR Engine)
-    // Cycles through a random pattern continuously at 12MHz.
     // ---------------------------------------------------------------------
-    reg [3:0] lfsr_reg = 4'b1011; // Must be initialized to a non-zero value!
+    reg [3:0] lfsr_reg = 4'b1011; 
 
     always @(posedge clk) begin
         if (reset) begin
-            lfsr_reg <= 4'b1011;   // Seed value fallback
+            lfsr_reg <= 4'b1011;   
         end else begin
-            // Tap configuration for a maximal-period 4-bit LFSR (Taps: bits 4 and 3)
             lfsr_reg <= {lfsr_reg[2:0], lfsr_reg[3] ^ lfsr_reg[2]};
         end
     end
 
-    // Split the running 4-bit random register into two 2-bit selection indices
     wire [1:0] rand_row_index = lfsr_reg[3:2];
     wire [1:0] rand_col_index = lfsr_reg[1:0];
 
-    reg [3:0] gen_index = 0; // Tracks which array slot we are loading during setup
+    reg [3:0] gen_index = 0; 
 
     reg [3:0]  state = STATE_BOOT_JINGLE;
     reg [24:0] delay_timer = 0;
 
-    // Game variables - Reworked into dedicated Row/Column memory arrays
-    // Sized to hold 12 slots of 14-bit frequency tokens
+    // Simon Game Master Sequences
     reg [13:0] game_sequence_r [0:11];
     reg [13:0] game_sequence_c [0:11];
     
-    localparam INIT_SEQ_LEN = 4'd3;         // Sized as a small 4-bit integer literal
-    localparam MAX_SEQ_LEN  = 4'd12;        // Upgraded depth index dynamically up to 12
+    // NEW: Player Input History Capture Buffers
+    reg [13:0] player_seq_r [0:11];
+    reg [13:0] player_seq_c [0:11];
+    reg [3:0]  player_step_counter = 0; // Increments on each step release
 
-    reg [3:0]  seq_len = INIT_SEQ_LEN; // Adjusted to test all 12 entries
+    localparam INIT_SEQ_LEN = 4'd3;         
+    localparam MAX_SEQ_LEN  = 4'd12;        
+
+    reg [3:0]  seq_len = INIT_SEQ_LEN; 
+
+    // ---------------------------------------------------------------------
+    // Edge Detection for Incremental Key Release Capturing
+    // ---------------------------------------------------------------------
+    reg any_key_pressed_d1 = 1'b0;
+    always @(posedge clk) begin
+        any_key_pressed_d1 <= any_key_pressed;
+    end
+    wire local_step_released = (any_key_pressed_d1 && !any_key_pressed);
 
     // ---------------------------------------------------------------------
     // Parallel Array-to-Light Decoder Wire Mapping Links
@@ -85,7 +95,6 @@ module simon_fsm (
     reg [1:0] light_row;
     reg [1:0] light_col;
 
-    // Direct combinatorial decoding maps constants instantly to coordinates
     always @(*) begin
         case (current_step_r)
             R1:      light_row = 2'd0;
@@ -104,13 +113,32 @@ module simon_fsm (
         endcase
     end
 
-    // Synchronous clock block locks down the clean active lighting output coordinate
     always @(posedge clk) begin
         if (state == STATE_SIMON_PLAYBACK) begin
             simon_active_key <= (light_row * 3'd4) + light_col;
         end else begin
-            simon_active_key <= 5'd16; // Standby / Off
+            simon_active_key <= 5'd16; 
         end
+    end
+
+    // Temporary variables used to store translated frequencies before capture latching
+    reg [13:0] live_translated_r;
+    reg [13:0] live_translated_c; // named uniquely to avoid constant collision
+
+    always @(*) begin
+        case (matrix_key_code[3:2])
+            2'd0:    live_translated_r = R1;
+            2'd1:    live_translated_r = R2;
+            2'd2:    live_translated_r = R3;
+            default: live_translated_r = R4;
+        endcase
+
+        case (matrix_key_code[1:0])
+            2'd0:    live_translated_c = C1;
+            2'd1:    live_translated_c = C2;
+            2'd2:    live_translated_c = C3;
+            default: live_translated_c = C4;
+        endcase
     end
 
     // ---------------------------------------------------------------------
@@ -125,14 +153,14 @@ module simon_fsm (
             gen_index          <= 4'd0;
             seq_len            <= INIT_SEQ_LEN;
             play_in_simon_mode <= 1'b0;
+            player_step_counter<= 4'd0;
         end else begin
             case (state)
                 // --- 1. LOAD AND PLAY BOOTUP SCALE ---
                 STATE_BOOT_JINGLE: begin
                     input_lockout   <= 1'b1;
-                    playback_length <= 4'd4; // 4 notes in startup melody
+                    playback_length <= 4'd4; 
                     
-                    // Directly load our target frequency notes step-by-step
                     simon_seq_r[0  +: 14] <= R1; simon_seq_c[0  +: 14] <= 14'd0;
                     simon_seq_r[14 +: 14] <= R2; simon_seq_c[14 +: 14] <= 14'd0;
                     simon_seq_r[28 +: 14] <= R3; simon_seq_c[28 +: 14] <= 14'd0;
@@ -154,9 +182,8 @@ module simon_fsm (
                     end
                 end
 
-                // --- 3. DYNAMIC GENERATOR SETUP: Populates all 12 slots randomly ---
+                // --- 3. DYNAMIC GENERATOR SETUP ---
                 STATE_GEN_SEQUENCE: begin
-                    // 1. Map the running random row index to our frequency constants
                     case (rand_row_index)
                         2'd0:    game_sequence_r[gen_index] <= R1;
                         2'd1:    game_sequence_r[gen_index] <= R2;
@@ -164,7 +191,6 @@ module simon_fsm (
                         2'd3:    game_sequence_r[gen_index] <= R4;
                     endcase
 
-                    // 2. Map the running random column index to our frequency constants
                     case (rand_col_index)
                         2'd0:    game_sequence_c[gen_index] <= C1;
                         2'd1:    game_sequence_c[gen_index] <= C2;
@@ -172,12 +198,11 @@ module simon_fsm (
                         2'd3:    game_sequence_c[gen_index] <= C4;
                     endcase
 
-                    // 3. Step Sequencer Iterator Loop
                     if (gen_index >= 4'd11) begin
-                        gen_index <= 0; // Array is fully loaded with random keys!
-                        state     <= STATE_SIMON_PLAYBACK; // Move to note playback
+                        gen_index <= 0;
+                        state     <= STATE_SIMON_PLAYBACK;
                     end else begin
-                        gen_index <= gen_index + 1'b1; // Advance to the next slot
+                        gen_index <= gen_index + 1'b1;
                     end
                 end
 
@@ -185,7 +210,7 @@ module simon_fsm (
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= seq_len; 
 
-                    // Directly copy memory array indices to parallel bus streams
+                    // FIX: Explicitly index every array slot into the parallel bus streams
                     simon_seq_r[0   +: 14] <= game_sequence_r[0];   simon_seq_c[0   +: 14] <= game_sequence_c[0];
                     simon_seq_r[14  +: 14] <= game_sequence_r[1];   simon_seq_c[14  +: 14] <= game_sequence_c[1];
                     simon_seq_r[28  +: 14] <= game_sequence_r[2];   simon_seq_c[28  +: 14] <= game_sequence_c[2];
@@ -199,46 +224,46 @@ module simon_fsm (
                     simon_seq_r[140 +: 14] <= game_sequence_r[10];  simon_seq_c[140 +: 14] <= game_sequence_c[10];
                     simon_seq_r[154 +: 14] <= game_sequence_r[11];  simon_seq_c[154 +: 14] <= game_sequence_c[11];
 
-                    play_in_simon_mode <= 1'b1; // Enforce slow playback speed + 600ms gaps
+                    play_in_simon_mode <= 1'b1; 
                     play_trigger       <= 1'b1; 
 
                     if (sequence_done) begin
                         play_trigger       <= 1'b0;
-                        play_in_simon_mode <= 1'b0; // Drop back down to fast playback timing rules
-                        input_lockout      <= 1'b0; // Unlatch input registers for live player scanning
+                        play_in_simon_mode <= 1'b0; 
+                        input_lockout      <= 1'b0; 
+                        player_step_counter<= 4'd0; 
                         state              <= STATE_PLAYER_TURN;
                     end
                 end
 
-                // --- 5. INTERACTIVE PLAYER INPUT WITH REAL-TIME AUDIO FEEDBACK ---
+                // --- 5. INTERACTIVE PLAYER INPUT WITH REAL-TIME BUFFER CAPTURE ---
                 STATE_PLAYER_TURN: begin
                     input_lockout   <= 1'b0;
-                    playback_length <= 4'd1; // Configure Tier-2 audio driver to slice first slot index only
+                    playback_length <= 4'd1;
 
                     if (any_key_pressed) begin
-                        play_trigger <= 1'b1; // Gate oscillator activation high continuously
-
-                        // Real-time dynamic routing of row matrix indices to audio constants
-                        if (matrix_key_code[3:2] == 2'd0)      simon_seq_r[0 +: 14] <= R1;
-                        else if (matrix_key_code[3:2] == 2'd1) simon_seq_r[0 +: 14] <= R2;
-                        else if (matrix_key_code[3:2] == 2'd2) simon_seq_r[0 +: 14] <= R3;
-                        else                                   simon_seq_r[0 +: 14] <= R4;
-
-                        // Real-time dynamic routing of column matrix indices to audio constants
-                        if (matrix_key_code[1:0] == 2'd0)      simon_seq_c[0 +: 14] <= C1;
-                        else if (matrix_key_code[1:0] == 2'd1) simon_seq_c[0 +: 14] <= C2;
-                        else if (matrix_key_code[1:0] == 2'd2) simon_seq_c[0 +: 14] <= C3;
-                        else                                   simon_seq_c[0 +: 14] <= C4;
+                        play_trigger         <= 1'b1;
+                        simon_seq_r[0 +: 14] <= live_translated_r;
+                        simon_seq_c[0 +: 14] <= live_translated_c;
                     end else begin
-                        play_trigger        <= 1'b0; // Instantly silence on button release
-                        simon_seq_r[0 +: 14]  <= 14'd0;
-                        simon_seq_c[0 +: 14]  <= 14'd0;
+                        play_trigger         <= 1'b0;
+                        simon_seq_r[0 +: 14] <= 14'd0;
+                        simon_seq_c[0 +: 14] <= 14'd0;
                     end
 
-                    // Evaluated the exact clock cycle your 2-second timeout expires from the scanner
+                    // NEW: Intercept individual releases and commit them into memory arrays
+                    if (local_step_released) begin
+                        if (player_step_counter < 4'd12) begin
+                            player_seq_r[player_step_counter] <= live_translated_r;
+                            player_seq_c[player_step_counter] <= live_translated_c;
+                            player_step_counter               <= player_step_counter + 1'b1;
+                        end
+                    end
+
+                    // Watch for the 2-second global inactivity strobe to finish the turn
                     if (final_key_released) begin
                         play_trigger  <= 1'b0;
-                        input_lockout <= 1'b1; // Secure inputs to eliminate processing collisions
+                        input_lockout <= 1'b1;
                         state         <= STATE_CHECK_ANSWER_DELAY;
                     end
                 end
@@ -248,13 +273,13 @@ module simon_fsm (
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
                         delay_timer <= 0;
-                        state       <= STATE_FAILURE_CHIME; // Hardcoded failure for testing
+                        state       <= STATE_FAILURE_CHIME;
                     end
                 end
 
                 // --- 7. LOAD AND PLAY TA-DA CHIME ---
                 STATE_VICTORY_CHIME: begin
-                    playback_length <= 4'd2; // 2 triumphant notes
+                    playback_length <= 4'd2;
                     
                     simon_seq_r[0  +: 14] <= 14'd3500; simon_seq_c[0  +: 14] <= 14'd0;
                     simon_seq_r[14 +: 14] <= 14'd1500; simon_seq_c[14 +: 14] <= 14'd0;
@@ -268,9 +293,8 @@ module simon_fsm (
 
                 // --- 8. LOAD AND PLAY LOW WAH-WAH-WAH FAIL CHIME ---
                 STATE_FAILURE_CHIME: begin
-                    playback_length <= 4'd4; // 4 sad, descending drone notes
+                    playback_length <= 4'd4;
                     
-                    // Incrementing counter integer tokens drives physical tone frequencies down
                     simon_seq_r[0   +: 14] <= 14'd10000; simon_seq_c[0   +: 14] <= 14'd0;
                     simon_seq_r[14  +: 14] <= 14'd11500; simon_seq_c[14  +: 14] <= 14'd0;
                     simon_seq_r[28  +: 14] <= 14'd13000; simon_seq_c[28  +: 14] <= 14'd0;
@@ -291,7 +315,6 @@ module simon_fsm (
                         state       <= STATE_BOOT_JINGLE; 
                     end
                     input_lockout <= 1'b1;
-                    // Safe terminal trap state or reset monitor loop
                 end
 
                 default: state <= STATE_BOOT_JINGLE;
