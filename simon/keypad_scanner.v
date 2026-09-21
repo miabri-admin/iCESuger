@@ -18,7 +18,9 @@ module keypad_scanner (
 
     // Decoded Outputs handed up to Upper-Level Engines
     output reg [4:0] matrix_key_code = 5'd16, 
-    output reg       any_key_pressed = 1'b0  
+    output reg       any_key_pressed = 1'b0  ,
+    output reg       key_released    = 1'b0   // <-- ADD THIS PORT LINE HERE
+
 );
 
     // ---------------------------------------------------------------------
@@ -88,8 +90,16 @@ module keypad_scanner (
 
     // Latches the data safely so the main loop can read it continuously
     always @(posedge clk) begin
-        matrix_key_code <= detected_code;
-        any_key_pressed <= (detected_code != 5'd16);
+        matrix_key_code    <= detected_code;
+        any_key_pressed    <= (detected_code != 5'd16);
+        any_key_pressed_d1 <= any_key_pressed; // Latches previous state
+
+        // Falling edge detection: True if it WAS pressed last cycle, but IS NOT pressed now
+        if (any_key_pressed_d1 && !any_key_pressed) begin
+            key_released <= 1'b1;
+        end else begin
+            key_released <= 1'b0;
+        end
     end
 
 endmodule

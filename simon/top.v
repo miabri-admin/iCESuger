@@ -19,7 +19,7 @@ module top (
     // Interconnecting Wire Routing Links (Internal System Buses)
     // ---------------------------------------------------------------------
     wire [4:0]   matrix_key_code;   // Raw parsed index coming from keyboard
-    wire         any_key_pressed;   // High when any physical key is held down
+    wire w_key_released;
     
     wire         input_lockout;     // Safety line to block accidental taps during plays
     
@@ -57,7 +57,9 @@ module top (
         .test_in2        (test_in2),
         .test_in3        (test_in3),
         .matrix_key_code (matrix_key_code),
-        .any_key_pressed (any_key_pressed)
+        .any_key_pressed (any_key_pressed),
+        .key_released(w_key_released)
+
     );
 
     // ---------------------------------------------------------------------
@@ -81,7 +83,9 @@ module top (
         // NEW OUTPUT PORT: Exposes Simon's current target key code to top level
         .audio_play_step     (audio_play_step),
         .simon_active_key    (simon_active_key),
-        .play_at_half_speed (play_at_half_speed)
+        .play_at_half_speed (play_at_half_speed),
+        .key_released(w_key_released)
+
     );
 
     // ---------------------------------------------------------------------
@@ -112,6 +116,8 @@ module top (
             target_light_code = matrix_key_code;
         end
     end
+
+
 
     // ---------------------------------------------------------------------
     // 5. Instantiation: PWM Visual Light Module Look-up

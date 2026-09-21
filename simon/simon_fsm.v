@@ -21,7 +21,9 @@ module simon_fsm (
     // Light Interface Feedback Bus Port Connections
     input      [3:0]  audio_play_step,
     output reg [4:0]  simon_active_key,
-    output reg        play_at_half_speed // NEW: Speed output wire to top.v
+    output reg        play_at_half_speed,
+
+    input             key_released
 
 );
 
@@ -188,10 +190,11 @@ module simon_fsm (
 
 
                 // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY (Reworked to copy arrays) ---
+                // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= seq_len; 
 
-                    // Directly copy our memory arrays over to the parallel bus channels
+                    // Directly copy memory array indices to parallel bus streams
                     out_seq_r[0   +: 14] <= game_sequence_r[0];  out_seq_c[0   +: 14] <= game_sequence_c[0];
                     out_seq_r[14  +: 14] <= game_sequence_r[1];  out_seq_c[14  +: 14] <= game_sequence_c[1];
                     out_seq_r[28  +: 14] <= game_sequence_r[2];  out_seq_c[28  +: 14] <= game_sequence_c[2];
@@ -205,16 +208,26 @@ module simon_fsm (
                     out_seq_r[140 +: 14] <= game_sequence_r[10]; out_seq_c[140 +: 14] <= game_sequence_c[10];
                     out_seq_r[154 +: 14] <= game_sequence_r[11]; out_seq_c[154 +: 14] <= game_sequence_c[11];
 
-                    play_trigger <= 1'b1; // Request playback start
-                    
+                    play_trigger <= 1'b1; 
+
+                    // Handshake validation logic to transition out of playback
                     if (sequence_done) begin
-                        play_trigger <= 1'b0; // Clean pull down request line
-                        state        <= STATE_CHECK_ANSWER_DELAY; 
+                        play_trigger  <= 1'b0;
+                        input_lockout <= 1'b0;             // CRITICAL: Unlock inputs for scanner
+                        state         <= STATE_PLAYER_TURN; // Advance to player input monitoring
                     end
                 end
 
+                // --- 5. WAIT FOR DEBOUCED KEY RELEASE ---
+                STATE_PLAYER_TURN: begin
+                    // FSM loops safely here until a clean, 1-cycle key release pulse arrives
+                    if (key_released) begin
+                        input_lockout <= 1'b1;             // Re-lock to avoid double-tap glitches
+                        state         <= STATE_CHECK_ANSWER_DELAY; 
+                    end
+                end
 
-                // --- 5. END OF PLAYBACK STANDBY FOR 2 SECONDS ---
+                // --- 6. CHECK ANSWER DELAY ---
                 STATE_CHECK_ANSWER_DELAY: begin
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
@@ -222,6 +235,7 @@ module simon_fsm (
                         state       <= STATE_VICTORY_CHIME;
                     end
                 end
+
 
                 // --- 6. LOAD AND PLAY TA-DA CHIME ---
                 STATE_VICTORY_CHIME: begin
