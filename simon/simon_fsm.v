@@ -38,9 +38,10 @@ module simon_fsm (
     localparam STATE_PLAYER_TURN        = 4'd4;
     localparam STATE_CHECK_ROUND        = 4'd5;
     localparam STATE_CHECK_ANSWER_DELAY = 4'd6;
-    localparam STATE_VICTORY_CHIME      = 4'd7;
-    localparam STATE_FAILURE_CHIME      = 4'd8;
-    localparam STATE_QUIET_LOCKOUT      = 4'd9;
+    localparam STATE_MATCH_CHIME        = 4'd7;
+    localparam STATE_VICTORY_CHIME      = 4'd8;
+    localparam STATE_FAILURE_CHIME      = 4'd9;
+    localparam STATE_QUIET_LOCKOUT      = 4'd10;
 
     // ---------------------------------------------------------------------
     // Hardware Pseudo-Random Number Generator (4-bit LFSR Engine)
@@ -287,7 +288,7 @@ module simon_fsm (
                 end
 
                 // --- 6. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
-                // Compares player history arrays directly to game sequences
+                // --- 6b. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
                 STATE_CHECK_ROUND: begin
                     match_failed = 1'b0;
 
@@ -308,23 +309,38 @@ module simon_fsm (
 
                     // Master Game Logic Core Routing Selection
                     if (match_failed) begin
-                        seq_len <= INIT_SEQ_LEN; // FIX: Reset difficulty back to 3 on a loss!
+                        seq_len <= INIT_SEQ_LEN; // Reset difficulty back to 3 on a loss
                         state   <= STATE_FAILURE_CHIME;
                     end else if (seq_len >= MAX_SEQ_LEN) begin
-                        seq_len <= INIT_SEQ_LEN; // FIX: Reset difficulty back to 3 on a full win!
-                        state   <= STATE_VICTORY_CHIME;
+                        seq_len <= INIT_SEQ_LEN; // Reset difficulty back to 3 after winning the full game
+                        state   <= STATE_VICTORY_CHIME;  // Long ultimate victory chime
                     end else begin
-                        seq_len <= seq_len + 1'b1; // Turn was perfect: increment difficulty
-                        state   <= STATE_START_DELAY;
+                        // Perfect sequence match! Branch to short confirmation chime first
+                        state   <= STATE_MATCH_CHIME;
                     end
-
                 end
 
-                // --- 7. LOAD AND PLAY TA-DA CHIME ---
+                // --- 6c. NEW: LOAD AND PLAY SHORT ROUND-MATCH CHIME ---
+                STATE_MATCH_CHIME: begin
+                    playback_length <= 4'd2; // 2 quick, uplifting confirmation tones
+
+                    // A short, crisp, pleasant rising double-beep (using standard column C1)
+                    simon_seq_r[0  +: 14] <= 14'd2500; simon_seq_c[0  +: 14] <= C1; // Quick mid note
+                    simon_seq_r[14 +: 14] <= 14'd2000; simon_seq_c[14 +: 14] <= C1; // Quick higher note
+
+                    play_trigger <= 1'b1;
+                    if (sequence_done) begin
+                        play_trigger <= 1'b0;
+                        seq_len      <= seq_len + 1'b1; // Advance difficulty level *after* audio finishes
+                        state        <= STATE_START_DELAY; // Return to the 2-second setup delay
+                    end
+                end
+
+                // --- 7. LOAD AND PLAY TA-DA LONG VICTORY CHIME ---
                 STATE_VICTORY_CHIME: begin
-                    playback_length <= 4'd2; // 2 triumphant notes
+                    playback_length <= 4'd2; // 2 long, triumphant notes
                     
-                    // FIX: Standardized column components to C1 to enable oscillator interleaving
+                    // Fixed column components to C1 to enable oscillator interleaving
                     simon_seq_r[0  +: 14] <= 14'd3500; simon_seq_c[0  +: 14] <= C1; // Note 1
                     simon_seq_r[14 +: 14] <= 14'd1500; simon_seq_c[14 +: 14] <= C1; // Note 2 (Triumphant High)
                     
