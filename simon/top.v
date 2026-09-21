@@ -19,7 +19,7 @@ module top (
     // Interconnecting Wire Routing Links (Internal System Buses)
     // ---------------------------------------------------------------------
     wire [4:0]   matrix_key_code;   // Raw parsed index coming from keyboard
-    wire w_key_released;
+    wire final_key_released;
     
     wire         input_lockout;     // Safety line to block accidental taps during plays
     
@@ -58,7 +58,7 @@ module top (
         .test_in3        (test_in3),
         .matrix_key_code (matrix_key_code),
         .any_key_pressed (any_key_pressed),
-        .key_released(w_key_released)
+        .final_key_released(final_key_released)
 
     );
 
@@ -84,7 +84,7 @@ module top (
         .audio_play_step     (audio_play_step),
         .simon_active_key    (simon_active_key),
         .play_in_simon_mode (play_in_simon_mode),
-        .key_released(w_key_released)
+        .final_key_released(final_key_released)
 
     );
 

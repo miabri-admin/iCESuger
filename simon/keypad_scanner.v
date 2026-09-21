@@ -1,5 +1,5 @@
 // =========================================================================
-// ISOLATED 4x4 MATRIX KEYPAD SCANNER MODULE WITH HOLD-LATCH
+// ISOLATED 4x4 MATRIX KEYPAD SCANNER MODULE WITH HOLD-LATCH & INACTIVITY DELAY
 // Keeps key_code active until next valid state shift
 // =========================================================================
 
@@ -17,10 +17,9 @@ module keypad_scanner (
     input            test_in3,        
 
     // Decoded Outputs handed up to Upper-Level Engines
-    output reg [4:0] matrix_key_code = 5'd16, 
-    output reg       any_key_pressed = 1'b0  ,
-    output reg       key_released    = 1'b0   // <-- ADD THIS PORT LINE HERE
-
+    output reg [4:0] matrix_key_code      = 5'd16, 
+    output reg       any_key_pressed      = 1'b0,
+    output reg       final_key_released   = 1'b0  // Fires 1 cycle on release after 2s quiet
 );
 
     // ---------------------------------------------------------------------
@@ -88,17 +87,37 @@ module keypad_scanner (
         else                    detected_code = 5'd16; 
     end
 
-    // Latches the data safely so the main loop can read it continuously
-    always @(posedge clk) begin
-        matrix_key_code    <= detected_code;
-        any_key_pressed    <= (detected_code != 5'd16);
-        any_key_pressed_d1 <= any_key_pressed; // Latches previous state
+    // ---------------------------------------------------------------------
+    // 4. Inactivity Tracking & Final Timeout Pulse Generation
+    // ---------------------------------------------------------------------
+    reg [24:0] inactivity_timer = 0;
+    reg        has_pressed      = 1'b0; // Latches high once user types
 
-        // Falling edge detection: True if it WAS pressed last cycle, but IS NOT pressed now
-        if (any_key_pressed_d1 && !any_key_pressed) begin
-            key_released <= 1'b1;
-        end else begin
-            key_released <= 1'b0;
+    always @(posedge clk) begin
+        matrix_key_code <= detected_code;
+        any_key_pressed <= (detected_code != 5'd16);
+
+        // 1. Capture user activity
+        if (any_key_pressed) begin
+            inactivity_timer   <= 0;
+            has_pressed        <= 1'b1; // Lock in that user turn has active inputs
+            final_key_released <= 1'b0; // Explicitly damp down flag
+        end 
+        // 2. Monitor for the 2-second timeout window
+        else if (has_pressed && (inactivity_timer >= 25'd23_999_999)) begin
+            inactivity_timer   <= 0;
+            has_pressed        <= 1'b0; // Reset typing flag for next turn
+            final_key_released <= 1'b1; // Fire the 1-cycle trigger to advance FSM!
+        end 
+        // 3. Count up during periods of silence
+        else if (has_pressed) begin
+            inactivity_timer   <= inactivity_timer + 1'b1;
+            final_key_released <= 1'b0;
+        end 
+        // 4. Standby quiet state
+        else begin
+            inactivity_timer   <= 0;
+            final_key_released <= 1'b0;
         end
     end
 

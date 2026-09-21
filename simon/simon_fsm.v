@@ -23,7 +23,7 @@ module simon_fsm (
     output reg [4:0]  simon_active_key,
     output reg        play_in_simon_mode,
 
-    input             key_released
+    input             final_key_released  // <-- CHANGE THIS PORT NAME FROM key_released
 
 );
 
@@ -221,7 +221,7 @@ module simon_fsm (
                 // --- 5. WAIT FOR DEBOUCED KEY RELEASE ---
                 STATE_PLAYER_TURN: begin
                     // FSM loops safely here until a clean, 1-cycle key release pulse arrives
-                    if (key_released) begin
+                    if (final_key_released) begin
                         input_lockout <= 1'b1;             // Re-lock to avoid double-tap glitches
                         state         <= STATE_CHECK_ANSWER_DELAY; 
                     end
