@@ -14,7 +14,7 @@ module audio_engine (
     output reg        sequence_done,      // Handshake signal sent back to Tier 1
     output            audio_l, audio_r,   // Physical audio outputs
     output     [3:0]  active_key_index,
-    input             play_at_half_speed  // Speed control wire from FSM
+    input             play_in_simon_mode  // Speed control wire from FSM
 );
 
     // Playback Step Sequencer Registers
@@ -34,7 +34,7 @@ module audio_engine (
     assign active_key_index = play_index;
 
     // Timer thresholds for 12MHz operation
-    wire [23:0] current_note_duration_max = play_at_half_speed ? 24'd7_199_999 : 24'd3_599_999;
+    wire [23:0] current_note_duration_max = play_in_simon_mode ? 24'd7_199_999 : 24'd3_599_999;
     localparam GAP_DURATION_MAX = 24'd7_199_999; // Exactly 600ms at 12MHz
 
     always @(posedge clk) begin
@@ -59,7 +59,7 @@ module audio_engine (
 
                 if (note_timer >= current_note_duration_max) begin 
                     note_timer <= 0;
-                    if (play_at_half_speed) begin
+                    if (play_in_simon_mode) begin
                         audio_state <= AUDIO_GAP; // Move to silence gap if half-speed
                     end else begin
                         // Normal execution without gap

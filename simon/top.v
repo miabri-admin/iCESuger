@@ -40,7 +40,7 @@ module top (
     reg  [4:0]   target_light_code; // Final multiplexed value sent to the LEDs
 
 
-    wire play_at_half_speed;
+    wire play_in_simon_mode;
 
 
     // ---------------------------------------------------------------------
@@ -83,7 +83,7 @@ module top (
         // NEW OUTPUT PORT: Exposes Simon's current target key code to top level
         .audio_play_step     (audio_play_step),
         .simon_active_key    (simon_active_key),
-        .play_at_half_speed (play_at_half_speed),
+        .play_in_simon_mode (play_in_simon_mode),
         .key_released(w_key_released)
 
     );
@@ -101,7 +101,7 @@ module top (
         .active_key_index    (audio_play_step), // Hands raw step index pointer up to top.v
         .audio_l             (audio_l),
         .audio_r             (audio_r),
-        .play_at_half_speed (play_at_half_speed)
+        .play_in_simon_mode (play_in_simon_mode)
     );
 
     // ---------------------------------------------------------------------
