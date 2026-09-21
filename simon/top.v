@@ -41,7 +41,7 @@ module top (
 
 
     wire play_in_simon_mode;
-
+    wire any_key_pressed;
 
     // ---------------------------------------------------------------------
     // 1. Instantiation: Hardware Matrix Peripheral Scanner
@@ -74,8 +74,8 @@ module top (
         // Parallel Data-Bus Interfaces
         .play_trigger        (play_trigger),
         .playback_length     (playback_length),
-        .out_seq_r           (shared_bus_r),
-        .out_seq_c           (shared_bus_c),
+        .simon_seq_r           (shared_bus_r),
+        .simon_seq_c           (shared_bus_c),
         .sequence_done       (sequence_done),
         
         .input_lockout       (input_lockout),

@@ -12,8 +12,8 @@ module simon_fsm (
     // Communication bus lines linked directly to the Tier-2 Audio Engine
     output reg        play_trigger,
     output reg [3:0]  playback_length,
-    output reg [167:0] out_seq_r,
-    output reg [167:0] out_seq_c,
+    output reg [167:0] simon_seq_r,
+    output reg [167:0] simon_seq_c,
     input             sequence_done,
 
     output reg        input_lockout,
@@ -133,10 +133,10 @@ module simon_fsm (
                     playback_length <= 4'd4; // 4 notes in startup melody
                     
                     // Directly load our target frequency notes step-by-step
-                    out_seq_r[0  +: 14] <= R1; out_seq_c[0  +: 14] <= 14'd0;
-                    out_seq_r[14 +: 14] <= R2; out_seq_c[14 +: 14] <= 14'd0;
-                    out_seq_r[28 +: 14] <= R3; out_seq_c[28 +: 14] <= 14'd0;
-                    out_seq_r[42 +: 14] <= R4; out_seq_c[42 +: 14] <= 14'd0;
+                    simon_seq_r[0  +: 14] <= R1; simon_seq_c[0  +: 14] <= 14'd0;
+                    simon_seq_r[14 +: 14] <= R2; simon_seq_c[14 +: 14] <= 14'd0;
+                    simon_seq_r[28 +: 14] <= R3; simon_seq_c[28 +: 14] <= 14'd0;
+                    simon_seq_r[42 +: 14] <= R4; simon_seq_c[42 +: 14] <= 14'd0;
 
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
@@ -186,18 +186,18 @@ module simon_fsm (
                     playback_length <= seq_len; 
 
                     // Directly copy memory array indices to parallel bus streams
-                    out_seq_r[0   +: 14] <= game_sequence_r[0];   out_seq_c[0   +: 14] <= game_sequence_c[0];
-                    out_seq_r[14  +: 14] <= game_sequence_r[1];   out_seq_c[14  +: 14] <= game_sequence_c[1];
-                    out_seq_r[28  +: 14] <= game_sequence_r[2];   out_seq_c[28  +: 14] <= game_sequence_c[2];
-                    out_seq_r[42  +: 14] <= game_sequence_r[3];   out_seq_c[42  +: 14] <= game_sequence_c[3];
-                    out_seq_r[56  +: 14] <= game_sequence_r[4];   out_seq_c[56  +: 14] <= game_sequence_c[4];
-                    out_seq_r[70  +: 14] <= game_sequence_r[5];   out_seq_c[70  +: 14] <= game_sequence_c[5];
-                    out_seq_r[84  +: 14] <= game_sequence_r[6];   out_seq_c[84  +: 14] <= game_sequence_c[6];
-                    out_seq_r[98  +: 14] <= game_sequence_r[7];   out_seq_c[98  +: 14] <= game_sequence_c[7];
-                    out_seq_r[112 +: 14] <= game_sequence_r[8];   out_seq_c[112 +: 14] <= game_sequence_c[8];
-                    out_seq_r[126 +: 14] <= game_sequence_r[9];   out_seq_c[126 +: 14] <= game_sequence_c[9];
-                    out_seq_r[140 +: 14] <= game_sequence_r[10];  out_seq_c[140 +: 14] <= game_sequence_c[10];
-                    out_seq_r[154 +: 14] <= game_sequence_r[11];  out_seq_c[154 +: 14] <= game_sequence_c[11];
+                    simon_seq_r[0   +: 14] <= game_sequence_r[0];   simon_seq_c[0   +: 14] <= game_sequence_c[0];
+                    simon_seq_r[14  +: 14] <= game_sequence_r[1];   simon_seq_c[14  +: 14] <= game_sequence_c[1];
+                    simon_seq_r[28  +: 14] <= game_sequence_r[2];   simon_seq_c[28  +: 14] <= game_sequence_c[2];
+                    simon_seq_r[42  +: 14] <= game_sequence_r[3];   simon_seq_c[42  +: 14] <= game_sequence_c[3];
+                    simon_seq_r[56  +: 14] <= game_sequence_r[4];   simon_seq_c[56  +: 14] <= game_sequence_c[4];
+                    simon_seq_r[70  +: 14] <= game_sequence_r[5];   simon_seq_c[70  +: 14] <= game_sequence_c[5];
+                    simon_seq_r[84  +: 14] <= game_sequence_r[6];   simon_seq_c[84  +: 14] <= game_sequence_c[6];
+                    simon_seq_r[98  +: 14] <= game_sequence_r[7];   simon_seq_c[98  +: 14] <= game_sequence_c[7];
+                    simon_seq_r[112 +: 14] <= game_sequence_r[8];   simon_seq_c[112 +: 14] <= game_sequence_c[8];
+                    simon_seq_r[126 +: 14] <= game_sequence_r[9];   simon_seq_c[126 +: 14] <= game_sequence_c[9];
+                    simon_seq_r[140 +: 14] <= game_sequence_r[10];  simon_seq_c[140 +: 14] <= game_sequence_c[10];
+                    simon_seq_r[154 +: 14] <= game_sequence_r[11];  simon_seq_c[154 +: 14] <= game_sequence_c[11];
 
                     play_in_simon_mode <= 1'b1; // Enforce slow playback speed + 600ms gaps
                     play_trigger       <= 1'b1; 
@@ -219,20 +219,20 @@ module simon_fsm (
                         play_trigger <= 1'b1; // Gate oscillator activation high continuously
 
                         // Real-time dynamic routing of row matrix indices to audio constants
-                        if (matrix_key_code[3:2] == 2'd0)      out_seq_r[0 +: 14] <= R1;
-                        else if (matrix_key_code[3:2] == 2'd1) out_seq_r[0 +: 14] <= R2;
-                        else if (matrix_key_code[3:2] == 2'd2) out_seq_r[0 +: 14] <= R3;
-                        else                                   out_seq_r[0 +: 14] <= R4;
+                        if (matrix_key_code[3:2] == 2'd0)      simon_seq_r[0 +: 14] <= R1;
+                        else if (matrix_key_code[3:2] == 2'd1) simon_seq_r[0 +: 14] <= R2;
+                        else if (matrix_key_code[3:2] == 2'd2) simon_seq_r[0 +: 14] <= R3;
+                        else                                   simon_seq_r[0 +: 14] <= R4;
 
                         // Real-time dynamic routing of column matrix indices to audio constants
-                        if (matrix_key_code[1:0] == 2'd0)      out_seq_c[0 +: 14] <= C1;
-                        else if (matrix_key_code[1:0] == 2'd1) out_seq_c[0 +: 14] <= C2;
-                        else if (matrix_key_code[1:0] == 2'd2) out_seq_c[0 +: 14] <= C3;
-                        else                                   out_seq_c[0 +: 14] <= C4;
+                        if (matrix_key_code[1:0] == 2'd0)      simon_seq_c[0 +: 14] <= C1;
+                        else if (matrix_key_code[1:0] == 2'd1) simon_seq_c[0 +: 14] <= C2;
+                        else if (matrix_key_code[1:0] == 2'd2) simon_seq_c[0 +: 14] <= C3;
+                        else                                   simon_seq_c[0 +: 14] <= C4;
                     end else begin
                         play_trigger        <= 1'b0; // Instantly silence on button release
-                        out_seq_r[0 +: 14]  <= 14'd0;
-                        out_seq_c[0 +: 14]  <= 14'd0;
+                        simon_seq_r[0 +: 14]  <= 14'd0;
+                        simon_seq_c[0 +: 14]  <= 14'd0;
                     end
 
                     // Evaluated the exact clock cycle your 2-second timeout expires from the scanner
@@ -256,8 +256,8 @@ module simon_fsm (
                 STATE_VICTORY_CHIME: begin
                     playback_length <= 4'd2; // 2 triumphant notes
                     
-                    out_seq_r[0  +: 14] <= 14'd3500; out_seq_c[0  +: 14] <= 14'd0;
-                    out_seq_r[14 +: 14] <= 14'd1500; out_seq_c[14 +: 14] <= 14'd0;
+                    simon_seq_r[0  +: 14] <= 14'd3500; simon_seq_c[0  +: 14] <= 14'd0;
+                    simon_seq_r[14 +: 14] <= 14'd1500; simon_seq_c[14 +: 14] <= 14'd0;
                     
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
@@ -271,10 +271,10 @@ module simon_fsm (
                     playback_length <= 4'd4; // 4 sad, descending drone notes
                     
                     // Incrementing counter integer tokens drives physical tone frequencies down
-                    out_seq_r[0   +: 14] <= 14'd10000; out_seq_c[0   +: 14] <= 14'd0;
-                    out_seq_r[14  +: 14] <= 14'd11500; out_seq_c[14  +: 14] <= 14'd0;
-                    out_seq_r[28  +: 14] <= 14'd13000; out_seq_c[28  +: 14] <= 14'd0;
-                    out_seq_r[42  +: 14] <= 14'd15500; out_seq_c[42  +: 14] <= 14'd0;
+                    simon_seq_r[0   +: 14] <= 14'd10000; simon_seq_c[0   +: 14] <= 14'd0;
+                    simon_seq_r[14  +: 14] <= 14'd11500; simon_seq_c[14  +: 14] <= 14'd0;
+                    simon_seq_r[28  +: 14] <= 14'd13000; simon_seq_c[28  +: 14] <= 14'd0;
+                    simon_seq_r[42  +: 14] <= 14'd15500; simon_seq_c[42  +: 14] <= 14'd0;
                     
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
