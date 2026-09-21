@@ -232,7 +232,30 @@ module simon_fsm (
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
                         delay_timer <= 0;
-                        state       <= STATE_VICTORY_CHIME;
+                        state       <= STATE_FAILURE_CHIME;
+                    end
+                end
+
+
+
+
+                // --- 7. LOAD AND PLAY LOW WAH-WAH-WAH FAIL CHIME ---
+                STATE_FAILURE_CHIME: begin
+                    playback_length <= 4'd4; // 4 sad, descending notes
+                    
+                    // Note 1: Low Wah (Higher counter value = lower frequency)
+                    out_seq_r[0   +: 14] <= 14'd10000; out_seq_c[0   +: 14] <= 14'd0; 
+                    // Note 2: Lower Wah
+                    out_seq_r[14  +: 14] <= 14'd11500; out_seq_c[14  +: 14] <= 14'd0; 
+                    // Note 3: Even Lower Wah
+                    out_seq_r[28  +: 14] <= 14'd13000; out_seq_c[28  +: 14] <= 14'd0; 
+                    // Note 4: The Final Bottom-Out Drone ("wahhh")
+                    out_seq_r[42  +: 14] <= 14'd15500; out_seq_c[42  +: 14] <= 14'd0; 
+
+                    play_trigger <= 1'b1;
+                    if (sequence_done) begin
+                        play_trigger <= 1'b0;
+                        state        <= STATE_QUIET_LOCKOUT;
                     end
                 end
 
