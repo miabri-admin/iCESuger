@@ -73,7 +73,7 @@ module simon_fsm (
     reg [13:0] player_seq_c [0:11];
     reg [3:0]  player_step_counter = 0; 
 
-    localparam INIT_SEQ_LEN = 4'd3;         
+    localparam INIT_SEQ_LEN = 4'd2;         
     localparam MAX_SEQ_LEN  = 4'd12;        
 
     reg [3:0]  seq_len = INIT_SEQ_LEN; 
