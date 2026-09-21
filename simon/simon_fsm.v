@@ -23,8 +23,7 @@ module simon_fsm (
     output reg [4:0]  simon_active_key,
     output reg        play_in_simon_mode,
 
-    input             final_key_released  // <-- CHANGE THIS PORT NAME FROM key_released
-
+    input             final_key_released  // Trigger from inactivity scanner
 );
 
     // Core DTMF Fixed Constant frequency blocks
@@ -42,8 +41,6 @@ module simon_fsm (
     localparam STATE_VICTORY_CHIME      = 4'd7;
     localparam STATE_FAILURE_CHIME      = 4'd8;
     localparam STATE_QUIET_LOCKOUT      = 4'd9;
-
-
 
     // ---------------------------------------------------------------------
     // Hardware Pseudo-Random Number Generator (4-bit LFSR Engine)
@@ -66,8 +63,6 @@ module simon_fsm (
 
     reg [3:0] gen_index = 0; // Tracks which array slot we are loading during setup
 
-
-
     reg [3:0]  state = STATE_BOOT_JINGLE;
     reg [24:0] delay_timer = 0;
 
@@ -79,10 +74,7 @@ module simon_fsm (
     localparam INIT_SEQ_LEN = 4'd3;         // Sized as a small 4-bit integer literal
     localparam MAX_SEQ_LEN  = 4'd12;        // Upgraded depth index dynamically up to 12
 
-
     reg [3:0]  seq_len = INIT_SEQ_LEN; // Adjusted to test all 12 entries
-
-
 
     // ---------------------------------------------------------------------
     // Parallel Array-to-Light Decoder Wire Mapping Links
@@ -121,16 +113,18 @@ module simon_fsm (
         end
     end
 
-
     // ---------------------------------------------------------------------
     // Master State Engine Main Loop Block
     // ---------------------------------------------------------------------
     always @(posedge clk) begin
         if (reset) begin
-            state        <= STATE_BOOT_JINGLE;
-            play_trigger <= 0;
-            delay_timer  <= 0;
-            input_lockout<= 1'b1;
+            state              <= STATE_BOOT_JINGLE;
+            play_trigger       <= 0;
+            delay_timer        <= 0;
+            input_lockout      <= 1'b1;
+            gen_index          <= 4'd0;
+            seq_len            <= INIT_SEQ_LEN;
+            play_in_simon_mode <= 1'b0;
         end else begin
             case (state)
                 // --- 1. LOAD AND PLAY BOOTUP SCALE ---
@@ -160,7 +154,6 @@ module simon_fsm (
                     end
                 end
 
-                // --- 3. PSEUDO GENERATOR SETUP (Reworked to store frequency constants) ---
                 // --- 3. DYNAMIC GENERATOR SETUP: Populates all 12 slots randomly ---
                 STATE_GEN_SEQUENCE: begin
                     // 1. Map the running random row index to our frequency constants
@@ -188,42 +181,65 @@ module simon_fsm (
                     end
                 end
 
-
-                // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY (Reworked to copy arrays) ---
                 // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= seq_len; 
 
                     // Directly copy memory array indices to parallel bus streams
-                    out_seq_r[0   +: 14] <= game_sequence_r[0];  out_seq_c[0   +: 14] <= game_sequence_c[0];
-                    out_seq_r[14  +: 14] <= game_sequence_r[1];  out_seq_c[14  +: 14] <= game_sequence_c[1];
-                    out_seq_r[28  +: 14] <= game_sequence_r[2];  out_seq_c[28  +: 14] <= game_sequence_c[2];
-                    out_seq_r[42  +: 14] <= game_sequence_r[3];  out_seq_c[42  +: 14] <= game_sequence_c[3];
-                    out_seq_r[56  +: 14] <= game_sequence_r[4];  out_seq_c[56  +: 14] <= game_sequence_c[4];
-                    out_seq_r[70  +: 14] <= game_sequence_r[5];  out_seq_c[70  +: 14] <= game_sequence_c[5];
-                    out_seq_r[84  +: 14] <= game_sequence_r[6];  out_seq_c[84  +: 14] <= game_sequence_c[6];
-                    out_seq_r[98  +: 14] <= game_sequence_r[7];  out_seq_c[98  +: 14] <= game_sequence_c[7];
-                    out_seq_r[112 +: 14] <= game_sequence_r[8];  out_seq_c[112 +: 14] <= game_sequence_c[8];
-                    out_seq_r[126 +: 14] <= game_sequence_r[9];  out_seq_c[126 +: 14] <= game_sequence_c[9];
-                    out_seq_r[140 +: 14] <= game_sequence_r[10]; out_seq_c[140 +: 14] <= game_sequence_c[10];
-                    out_seq_r[154 +: 14] <= game_sequence_r[11]; out_seq_c[154 +: 14] <= game_sequence_c[11];
+                    out_seq_r[0   +: 14] <= game_sequence_r[0];   out_seq_c[0   +: 14] <= game_sequence_c[0];
+                    out_seq_r[14  +: 14] <= game_sequence_r[1];   out_seq_c[14  +: 14] <= game_sequence_c[1];
+                    out_seq_r[28  +: 14] <= game_sequence_r[2];   out_seq_c[28  +: 14] <= game_sequence_c[2];
+                    out_seq_r[42  +: 14] <= game_sequence_r[3];   out_seq_c[42  +: 14] <= game_sequence_c[3];
+                    out_seq_r[56  +: 14] <= game_sequence_r[4];   out_seq_c[56  +: 14] <= game_sequence_c[4];
+                    out_seq_r[70  +: 14] <= game_sequence_r[5];   out_seq_c[70  +: 14] <= game_sequence_c[5];
+                    out_seq_r[84  +: 14] <= game_sequence_r[6];   out_seq_c[84  +: 14] <= game_sequence_c[6];
+                    out_seq_r[98  +: 14] <= game_sequence_r[7];   out_seq_c[98  +: 14] <= game_sequence_c[7];
+                    out_seq_r[112 +: 14] <= game_sequence_r[8];   out_seq_c[112 +: 14] <= game_sequence_c[8];
+                    out_seq_r[126 +: 14] <= game_sequence_r[9];   out_seq_c[126 +: 14] <= game_sequence_c[9];
+                    out_seq_r[140 +: 14] <= game_sequence_r[10];  out_seq_c[140 +: 14] <= game_sequence_c[10];
+                    out_seq_r[154 +: 14] <= game_sequence_r[11];  out_seq_c[154 +: 14] <= game_sequence_c[11];
 
-                    play_trigger <= 1'b1; 
+                    play_in_simon_mode <= 1'b1; // Enforce slow playback speed + 600ms gaps
+                    play_trigger       <= 1'b1; 
 
-                    // Handshake validation logic to transition out of playback
                     if (sequence_done) begin
-                        play_trigger  <= 1'b0;
-                        input_lockout <= 1'b0;             // CRITICAL: Unlock inputs for scanner
-                        state         <= STATE_PLAYER_TURN; // Advance to player input monitoring
+                        play_trigger       <= 1'b0;
+                        play_in_simon_mode <= 1'b0; // Drop back down to fast playback timing rules
+                        input_lockout      <= 1'b0; // Unlatch input registers for live player scanning
+                        state              <= STATE_PLAYER_TURN;
                     end
                 end
 
-                // --- 5. WAIT FOR DEBOUCED KEY RELEASE ---
+                // --- 5. INTERACTIVE PLAYER INPUT WITH REAL-TIME AUDIO FEEDBACK ---
                 STATE_PLAYER_TURN: begin
-                    // FSM loops safely here until a clean, 1-cycle key release pulse arrives
+                    input_lockout   <= 1'b0;
+                    playback_length <= 4'd1; // Configure Tier-2 audio driver to slice first slot index only
+
+                    if (any_key_pressed) begin
+                        play_trigger <= 1'b1; // Gate oscillator activation high continuously
+
+                        // Real-time dynamic routing of row matrix indices to audio constants
+                        if (matrix_key_code[3:2] == 2'd0)      out_seq_r[0 +: 14] <= R1;
+                        else if (matrix_key_code[3:2] == 2'd1) out_seq_r[0 +: 14] <= R2;
+                        else if (matrix_key_code[3:2] == 2'd2) out_seq_r[0 +: 14] <= R3;
+                        else                                   out_seq_r[0 +: 14] <= R4;
+
+                        // Real-time dynamic routing of column matrix indices to audio constants
+                        if (matrix_key_code[1:0] == 2'd0)      out_seq_c[0 +: 14] <= C1;
+                        else if (matrix_key_code[1:0] == 2'd1) out_seq_c[0 +: 14] <= C2;
+                        else if (matrix_key_code[1:0] == 2'd2) out_seq_c[0 +: 14] <= C3;
+                        else                                   out_seq_c[0 +: 14] <= C4;
+                    end else begin
+                        play_trigger        <= 1'b0; // Instantly silence on button release
+                        out_seq_r[0 +: 14]  <= 14'd0;
+                        out_seq_c[0 +: 14]  <= 14'd0;
+                    end
+
+                    // Evaluated the exact clock cycle your 2-second timeout expires from the scanner
                     if (final_key_released) begin
-                        input_lockout <= 1'b1;             // Re-lock to avoid double-tap glitches
-                        state         <= STATE_CHECK_ANSWER_DELAY; 
+                        play_trigger  <= 1'b0;
+                        input_lockout <= 1'b1; // Secure inputs to eliminate processing collisions
+                        state         <= STATE_CHECK_ANSWER_DELAY;
                     end
                 end
 
@@ -232,41 +248,17 @@ module simon_fsm (
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
                         delay_timer <= 0;
-                        state       <= STATE_FAILURE_CHIME;
+                        state       <= STATE_FAILURE_CHIME; // Hardcoded failure for testing
                     end
                 end
 
-
-
-
-                // --- 7. LOAD AND PLAY LOW WAH-WAH-WAH FAIL CHIME ---
-                STATE_FAILURE_CHIME: begin
-                    playback_length <= 4'd4; // 4 sad, descending notes
-                    
-                    // Note 1: Low Wah (Higher counter value = lower frequency)
-                    out_seq_r[0   +: 14] <= 14'd10000; out_seq_c[0   +: 14] <= 14'd0; 
-                    // Note 2: Lower Wah
-                    out_seq_r[14  +: 14] <= 14'd11500; out_seq_c[14  +: 14] <= 14'd0; 
-                    // Note 3: Even Lower Wah
-                    out_seq_r[28  +: 14] <= 14'd13000; out_seq_c[28  +: 14] <= 14'd0; 
-                    // Note 4: The Final Bottom-Out Drone ("wahhh")
-                    out_seq_r[42  +: 14] <= 14'd15500; out_seq_c[42  +: 14] <= 14'd0; 
-
-                    play_trigger <= 1'b1;
-                    if (sequence_done) begin
-                        play_trigger <= 1'b0;
-                        state        <= STATE_QUIET_LOCKOUT;
-                    end
-                end
-
-
-                // --- 6. LOAD AND PLAY TA-DA CHIME ---
+                // --- 7. LOAD AND PLAY TA-DA CHIME ---
                 STATE_VICTORY_CHIME: begin
-                    playback_length <= 4'd2; // 2 notes inside our Ta-Da chime
+                    playback_length <= 4'd2; // 2 triumphant notes
                     
-                    out_seq_r[0  +: 14] <= 14'd3500; out_seq_c[0  +: 14] <= 14'd0; // Note 1
-                    out_seq_r[14 +: 14] <= 14'd1500; out_seq_c[14 +: 14] <= 14'd0; // Note 2 (Triumphant High)
-
+                    out_seq_r[0  +: 14] <= 14'd3500; out_seq_c[0  +: 14] <= 14'd0;
+                    out_seq_r[14 +: 14] <= 14'd1500; out_seq_c[14 +: 14] <= 14'd0;
+                    
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
                         play_trigger <= 1'b0;
@@ -274,26 +266,37 @@ module simon_fsm (
                     end
                 end
 
-                // --- 7. END OF CYCLE STANDBY FOR 2 SECONDS ---
+                // --- 8. LOAD AND PLAY LOW WAH-WAH-WAH FAIL CHIME ---
+                STATE_FAILURE_CHIME: begin
+                    playback_length <= 4'd4; // 4 sad, descending drone notes
+                    
+                    // Incrementing counter integer tokens drives physical tone frequencies down
+                    out_seq_r[0   +: 14] <= 14'd10000; out_seq_c[0   +: 14] <= 14'd0;
+                    out_seq_r[14  +: 14] <= 14'd11500; out_seq_c[14  +: 14] <= 14'd0;
+                    out_seq_r[28  +: 14] <= 14'd13000; out_seq_c[28  +: 14] <= 14'd0;
+                    out_seq_r[42  +: 14] <= 14'd15500; out_seq_c[42  +: 14] <= 14'd0;
+                    
+                    play_trigger <= 1'b1;
+                    if (sequence_done) begin
+                        play_trigger <= 1'b0;
+                        state        <= STATE_QUIET_LOCKOUT;
+                    end
+                end
+
+                // --- 9. LOCKOUT COOL DOWN STATE ---
                 STATE_QUIET_LOCKOUT: begin
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
                         delay_timer <= 0;
                         state       <= STATE_BOOT_JINGLE; 
                     end
+                    input_lockout <= 1'b1;
+                    // Safe terminal trap state or reset monitor loop
                 end
-                
+
                 default: state <= STATE_BOOT_JINGLE;
             endcase
         end
-    end
-
-   // Drive the half speed flag exclusively when Simon is showcasing his sequence memory notes
-    always @(*) begin
-        if (state == STATE_SIMON_PLAYBACK)
-            play_in_simon_mode = 1'b1; // Simon plays slow (~600ms)
-        else
-            play_in_simon_mode = 1'b0; // Everything else (Tada, Startup, etc) plays fast (~300ms)
     end
 
 endmodule
