@@ -55,9 +55,11 @@ module simon_fsm (
         end
     end
 
-    wire [1:0] rand_row_index = lfsr_reg[3:2];
+    //wire [1:0] rand_row_index = lfsr_reg[3:2];
+    wire [1:0] rand_row_index = 0;// alway 0
+    
     wire [1:0] rand_col_index = lfsr_reg[1:0];
-
+    
     reg [3:0] gen_index = 0; 
 
     reg [3:0]  state = STATE_BOOT_JINGLE;
@@ -94,6 +96,12 @@ module simon_fsm (
 
     reg [1:0] light_row;
     reg [1:0] light_col;
+
+    // Loop indexing and validation registers
+    reg        match_failed;
+    integer    check_idx;
+
+
 
     always @(*) begin
         case (current_step_r)
@@ -161,10 +169,10 @@ module simon_fsm (
                     input_lockout   <= 1'b1;
                     playback_length <= 4'd4; 
                     
-                    simon_seq_r[0  +: 14] <= R1; simon_seq_c[0  +: 14] <= 14'd0;
-                    simon_seq_r[14 +: 14] <= R2; simon_seq_c[14 +: 14] <= 14'd0;
-                    simon_seq_r[28 +: 14] <= R3; simon_seq_c[28 +: 14] <= 14'd0;
-                    simon_seq_r[42 +: 14] <= R4; simon_seq_c[42 +: 14] <= 14'd0;
+                    simon_seq_r[0  +: 14] <= R1; simon_seq_c[0  +: 14] <= C1; // Standardized to Column 0
+                    simon_seq_r[14 +: 14] <= R2; simon_seq_c[14 +: 14] <= C1;
+                    simon_seq_r[28 +: 14] <= R3; simon_seq_c[28 +: 14] <= C1;
+                    simon_seq_r[42 +: 14] <= R4; simon_seq_c[42 +: 14] <= C1;
 
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
@@ -210,7 +218,7 @@ module simon_fsm (
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= seq_len; 
 
-                    // FIX: Explicitly index every array slot into the parallel bus streams
+                    // FIX: Explicitly supply array slot indices [0] through [11]
                     simon_seq_r[0   +: 14] <= game_sequence_r[0];   simon_seq_c[0   +: 14] <= game_sequence_c[0];
                     simon_seq_r[14  +: 14] <= game_sequence_r[1];   simon_seq_c[14  +: 14] <= game_sequence_c[1];
                     simon_seq_r[28  +: 14] <= game_sequence_r[2];   simon_seq_c[28  +: 14] <= game_sequence_c[2];
@@ -268,12 +276,41 @@ module simon_fsm (
                     end
                 end
 
-                // --- 6. CHECK ANSWER DELAY ---
+                // --- 6. CHECK ANSWER DELAY BUFFER WINDOW ---
                 STATE_CHECK_ANSWER_DELAY: begin
-                    delay_timer <= delay_timer + 1'b1;
-                    if (delay_timer >= 25'd23_999_999) begin
-                        delay_timer <= 0;
-                        state       <= STATE_FAILURE_CHIME;
+                    state <= STATE_CHECK_ROUND;
+                end
+
+                // --- 6b. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
+                STATE_CHECK_ROUND: begin
+                    // FIX: Removed the implicit 'reg' and 'integer' keywords from here
+                    match_failed = 1'b0;
+
+                    // Criterion 1: Verify the player actually entered the correct number of notes
+                    if (player_step_counter != seq_len) begin
+                        match_failed = 1'b1;
+                    end
+
+                    // Criterion 2: Combinatorial sweep across active phrase indices
+                    for (check_idx = 0; check_idx < 12; check_idx = check_idx + 1) begin
+                        if (check_idx < seq_len) begin
+                            // Mismatch detected in either the DTMF Row or Column constant bands
+                            if ((player_seq_r[check_idx] != game_sequence_r[check_idx]) ||
+                                (player_seq_c[check_idx] != game_sequence_c[check_idx])) begin
+                                match_failed = 1'b1;
+                            end
+                        end
+                    end
+
+                    // Master Branch Selection Routing
+                    if (match_failed) begin
+                        state <= STATE_FAILURE_CHIME; // Route straight to low pitch "wah-wah-wah"
+                    end else if (seq_len >= MAX_SEQ_LEN) begin
+                        state <= STATE_VICTORY_CHIME; // Maximum game length completed! Ta-da!
+                    end else begin
+                        // Phrase was perfect! Advance sequence difficulty length and restart loop
+                        seq_len <= seq_len + 1'b1;
+                        state   <= STATE_START_DELAY; // Return to the 2-second setup delay
                     end
                 end
 
