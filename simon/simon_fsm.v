@@ -55,9 +55,8 @@ module simon_fsm (
         end
     end
 
-    //wire [1:0] rand_row_index = lfsr_reg[3:2];
-    wire [1:0] rand_row_index = 0;// alway 0
-    
+    // Sequence Generation Rules: Row 0 is locked; Column moves randomly
+    wire [1:0] rand_row_index = 2'd0; // Locked to 0 for specific color orientation setup
     wire [1:0] rand_col_index = lfsr_reg[1:0];
     
     reg [3:0] gen_index = 0; 
@@ -69,10 +68,10 @@ module simon_fsm (
     reg [13:0] game_sequence_r [0:11];
     reg [13:0] game_sequence_c [0:11];
     
-    // NEW: Player Input History Capture Buffers
+    // Player Input History Capture Buffers
     reg [13:0] player_seq_r [0:11];
     reg [13:0] player_seq_c [0:11];
-    reg [3:0]  player_step_counter = 0; // Increments on each step release
+    reg [3:0]  player_step_counter = 0; 
 
     localparam INIT_SEQ_LEN = 4'd3;         
     localparam MAX_SEQ_LEN  = 4'd12;        
@@ -101,8 +100,6 @@ module simon_fsm (
     reg        match_failed;
     integer    check_idx;
 
-
-
     always @(*) begin
         case (current_step_r)
             R1:      light_row = 2'd0;
@@ -129,9 +126,13 @@ module simon_fsm (
         end
     end
 
-    // Temporary variables used to store translated frequencies before capture latching
+    // ---------------------------------------------------------------------
+    // Symmetrical Live Translation Mapping with History Pipelining
+    // ---------------------------------------------------------------------
     reg [13:0] live_translated_r;
-    reg [13:0] live_translated_c; // named uniquely to avoid constant collision
+    reg [13:0] live_translated_c;
+    reg [13:0] live_translated_r_d1;
+    reg [13:0] live_translated_c_d1;
 
     always @(*) begin
         case (matrix_key_code[3:2])
@@ -154,22 +155,32 @@ module simon_fsm (
     // ---------------------------------------------------------------------
     always @(posedge clk) begin
         if (reset) begin
-            state              <= STATE_BOOT_JINGLE;
-            play_trigger       <= 0;
-            delay_timer        <= 0;
-            input_lockout      <= 1'b1;
-            gen_index          <= 4'd0;
-            seq_len            <= INIT_SEQ_LEN;
-            play_in_simon_mode <= 1'b0;
-            player_step_counter<= 4'd0;
+            state               <= STATE_BOOT_JINGLE;
+            play_trigger        <= 0;
+            delay_timer         <= 0;
+            input_lockout       <= 1'b1;
+            gen_index           <= 4'd0;
+            seq_len             <= INIT_SEQ_LEN;
+            play_in_simon_mode  <= 1'b0;
+            player_step_counter <= 4'd0;
+            live_translated_r_d1<= 14'd0;
+            live_translated_c_d1<= 14'd0;
+            match_failed        <= 1'b0;
         end else begin
+            
+            // Safe history capture window to snapshot values before release reset
+            if (any_key_pressed) begin
+                live_translated_r_d1 <= live_translated_r;
+                live_translated_c_d1 <= live_translated_c;
+            end
+
             case (state)
                 // --- 1. LOAD AND PLAY BOOTUP SCALE ---
                 STATE_BOOT_JINGLE: begin
                     input_lockout   <= 1'b1;
                     playback_length <= 4'd4; 
                     
-                    simon_seq_r[0  +: 14] <= R1; simon_seq_c[0  +: 14] <= C1; // Standardized to Column 0
+                    simon_seq_r[0  +: 14] <= R1; simon_seq_c[0  +: 14] <= C1; 
                     simon_seq_r[14 +: 14] <= R2; simon_seq_c[14 +: 14] <= C1;
                     simon_seq_r[28 +: 14] <= R3; simon_seq_c[28 +: 14] <= C1;
                     simon_seq_r[42 +: 14] <= R4; simon_seq_c[42 +: 14] <= C1;
@@ -218,7 +229,6 @@ module simon_fsm (
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= seq_len; 
 
-                    // FIX: Explicitly supply array slot indices [0] through [11]
                     simon_seq_r[0   +: 14] <= game_sequence_r[0];   simon_seq_c[0   +: 14] <= game_sequence_c[0];
                     simon_seq_r[14  +: 14] <= game_sequence_r[1];   simon_seq_c[14  +: 14] <= game_sequence_c[1];
                     simon_seq_r[28  +: 14] <= game_sequence_r[2];   simon_seq_c[28  +: 14] <= game_sequence_c[2];
@@ -232,19 +242,19 @@ module simon_fsm (
                     simon_seq_r[140 +: 14] <= game_sequence_r[10];  simon_seq_c[140 +: 14] <= game_sequence_c[10];
                     simon_seq_r[154 +: 14] <= game_sequence_r[11];  simon_seq_c[154 +: 14] <= game_sequence_c[11];
 
-                    play_in_simon_mode <= 1'b1; 
-                    play_trigger       <= 1'b1; 
+                    play_in_simon_mode <= 1'b1;
+                    play_trigger       <= 1'b1;
 
                     if (sequence_done) begin
-                        play_trigger       <= 1'b0;
-                        play_in_simon_mode <= 1'b0; 
-                        input_lockout      <= 1'b0; 
-                        player_step_counter<= 4'd0; 
-                        state              <= STATE_PLAYER_TURN;
+                        play_trigger        <= 1'b0;
+                        play_in_simon_mode  <= 1'b0;
+                        input_lockout       <= 1'b0;
+                        player_step_counter <= 4'd0;
+                        state               <= STATE_PLAYER_TURN;
                     end
                 end
 
-                // --- 5. INTERACTIVE PLAYER INPUT WITH REAL-TIME BUFFER CAPTURE ---
+                // --- 5. INTERACTIVE PLAYER INPUT WITH D1 HISTORY CAPTURE ---
                 STATE_PLAYER_TURN: begin
                     input_lockout   <= 1'b0;
                     playback_length <= 4'd1;
@@ -259,42 +269,36 @@ module simon_fsm (
                         simon_seq_c[0 +: 14] <= 14'd0;
                     end
 
-                    // NEW: Intercept individual releases and commit them into memory arrays
+                    // Commit history registers to buffer array upon release edge detection
                     if (local_step_released) begin
                         if (player_step_counter < 4'd12) begin
-                            player_seq_r[player_step_counter] <= live_translated_r;
-                            player_seq_c[player_step_counter] <= live_translated_c;
+                            player_seq_r[player_step_counter] <= live_translated_r_d1;
+                            player_seq_c[player_step_counter] <= live_translated_c_d1;
                             player_step_counter               <= player_step_counter + 1'b1;
                         end
                     end
 
-                    // Watch for the 2-second global inactivity strobe to finish the turn
+                    // Watch for the 2-second global inactivity strobe to evaluate turn phrase
                     if (final_key_released) begin
                         play_trigger  <= 1'b0;
                         input_lockout <= 1'b1;
-                        state         <= STATE_CHECK_ANSWER_DELAY;
+                        state         <= STATE_CHECK_ROUND;
                     end
                 end
 
-                // --- 6. CHECK ANSWER DELAY BUFFER WINDOW ---
-                STATE_CHECK_ANSWER_DELAY: begin
-                    state <= STATE_CHECK_ROUND;
-                end
-
-                // --- 6b. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
+                // --- 6. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
+                // Compares player history arrays directly to game sequences
                 STATE_CHECK_ROUND: begin
-                    // FIX: Removed the implicit 'reg' and 'integer' keywords from here
                     match_failed = 1'b0;
 
-                    // Criterion 1: Verify the player actually entered the correct number of notes
+                    // Criterion 1: Verify total key entry step length matches
                     if (player_step_counter != seq_len) begin
                         match_failed = 1'b1;
                     end
 
-                    // Criterion 2: Combinatorial sweep across active phrase indices
+                    // Criterion 2: Match captured tones up to current active round length
                     for (check_idx = 0; check_idx < 12; check_idx = check_idx + 1) begin
                         if (check_idx < seq_len) begin
-                            // Mismatch detected in either the DTMF Row or Column constant bands
                             if ((player_seq_r[check_idx] != game_sequence_r[check_idx]) ||
                                 (player_seq_c[check_idx] != game_sequence_c[check_idx])) begin
                                 match_failed = 1'b1;
@@ -302,24 +306,27 @@ module simon_fsm (
                         end
                     end
 
-                    // Master Branch Selection Routing
+                    // Master Game Logic Core Routing Selection
                     if (match_failed) begin
-                        state <= STATE_FAILURE_CHIME; // Route straight to low pitch "wah-wah-wah"
+                        seq_len <= INIT_SEQ_LEN; // FIX: Reset difficulty back to 3 on a loss!
+                        state   <= STATE_FAILURE_CHIME;
                     end else if (seq_len >= MAX_SEQ_LEN) begin
-                        state <= STATE_VICTORY_CHIME; // Maximum game length completed! Ta-da!
+                        seq_len <= INIT_SEQ_LEN; // FIX: Reset difficulty back to 3 on a full win!
+                        state   <= STATE_VICTORY_CHIME;
                     end else begin
-                        // Phrase was perfect! Advance sequence difficulty length and restart loop
-                        seq_len <= seq_len + 1'b1;
-                        state   <= STATE_START_DELAY; // Return to the 2-second setup delay
+                        seq_len <= seq_len + 1'b1; // Turn was perfect: increment difficulty
+                        state   <= STATE_START_DELAY;
                     end
+
                 end
 
                 // --- 7. LOAD AND PLAY TA-DA CHIME ---
                 STATE_VICTORY_CHIME: begin
-                    playback_length <= 4'd2;
+                    playback_length <= 4'd2; // 2 triumphant notes
                     
-                    simon_seq_r[0  +: 14] <= 14'd3500; simon_seq_c[0  +: 14] <= 14'd0;
-                    simon_seq_r[14 +: 14] <= 14'd1500; simon_seq_c[14 +: 14] <= 14'd0;
+                    // FIX: Standardized column components to C1 to enable oscillator interleaving
+                    simon_seq_r[0  +: 14] <= 14'd3500; simon_seq_c[0  +: 14] <= C1; // Note 1
+                    simon_seq_r[14 +: 14] <= 14'd1500; simon_seq_c[14 +: 14] <= C1; // Note 2 (Triumphant High)
                     
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
