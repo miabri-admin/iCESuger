@@ -1,7 +1,6 @@
 // =========================================================================
 // UNIVERSAL ARRAY-BASED SEQUENCE AUDIO DRIVER (audio_engine.v)
-// Plays a loaded 12-note sequence array block sequentially.
-// FIXED: Combined interlock handshake AND play_at_half_speed duration selection.
+// Plays a loaded 12-note sequence array block sequentially with 600ms gaps.
 // =========================================================================
 
 module audio_engine (
@@ -23,9 +22,10 @@ module audio_engine (
     reg [23:0] note_timer = 0;
     
     // Internal Playback State Engine States
-    localparam AUDIO_IDLE  = 2'd0;
-    localparam AUDIO_PLAY  = 2'd1;
-    localparam AUDIO_DONE  = 2'd2;
+    localparam AUDIO_IDLE = 2'd0;
+    localparam AUDIO_PLAY = 2'd1;
+    localparam AUDIO_GAP  = 2'd2; // NEW: Inter-note silence gap state
+    localparam AUDIO_DONE = 2'd3; 
     reg [1:0]  audio_state = AUDIO_IDLE;
 
     reg [13:0] row_max;
@@ -33,8 +33,9 @@ module audio_engine (
 
     assign active_key_index = play_index;
 
-    // RESTORED: Dynamic timer ceiling lookup selector
+    // Timer thresholds for 12MHz operation
     wire [23:0] current_note_duration_max = play_at_half_speed ? 24'd7_199_999 : 24'd3_599_999;
+    localparam GAP_DURATION_MAX = 24'd7_199_999; // Exactly 600ms at 12MHz
 
     always @(posedge clk) begin
         case (audio_state)
@@ -50,32 +51,53 @@ module audio_engine (
                 end
             end
 
-            // Run through the loaded notes sequentially
+            // Play the active note tone
             AUDIO_PLAY: begin
                 note_timer <= note_timer + 1'b1;
                 row_max    <= shared_sequence_r[(play_index * 14) +: 14];
                 col_max    <= shared_sequence_c[(play_index * 14) +: 14];
 
-                // FIXED: Honors the dynamic duration ceiling depending on what state called it
                 if (note_timer >= current_note_duration_max) begin 
                     note_timer <= 0;
-                    if (play_index >= (sequence_length - 1'b1)) begin
-                        sequence_done <= 1'b1; // Signal done to main FSM
-                        audio_state   <= AUDIO_DONE; // Transition to interlock hold
+                    if (play_at_half_speed) begin
+                        audio_state <= AUDIO_GAP; // Move to silence gap if half-speed
                     end else begin
-                        play_index <= play_index + 1'b1;
+                        // Normal execution without gap
+                        if (play_index >= (sequence_length - 1'b1)) begin
+                            sequence_done <= 1'b1;
+                            audio_state   <= AUDIO_DONE;
+                        end else begin
+                            play_index <= play_index + 1'b1;
+                        end
                     end
                 end
             end
 
-            // FIXED INTERLOCK STATE: Keep sequence_done high until play_trigger drops to 0.
-            // This absorbs the 1-cycle propagation delay and prevents instant double plays!
+            // NEW: Silence Gap State for 600ms
+            AUDIO_GAP: begin
+                note_timer <= note_timer + 1'b1;
+                row_max    <= 14'd0; // Mute row oscillator
+                col_max    <= 14'd0; // Mute column oscillator
+
+                if (note_timer >= GAP_DURATION_MAX) begin
+                    note_timer <= 0;
+                    if (play_index >= (sequence_length - 1'b1)) begin
+                        sequence_done <= 1'b1;
+                        audio_state   <= AUDIO_DONE; // Sequence completed
+                    end else begin
+                        play_index  <= play_index + 1'b1; // Advance note pointer
+                        audio_state <= AUDIO_PLAY;         // Play next note
+                    end
+                end
+            end
+
+            // Keep sequence_done high until play_trigger drops to 0
             AUDIO_DONE: begin
                 row_max <= 14'd0;
                 col_max <= 14'd0;
                 if (!play_trigger) begin
                     sequence_done <= 1'b0;
-                    audio_state   <= AUDIO_IDLE; // Safely return to standby
+                    audio_state   <= AUDIO_IDLE;
                 end else begin
                     sequence_done <= 1'b1;
                 end
