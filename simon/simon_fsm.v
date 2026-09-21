@@ -1,6 +1,6 @@
 // =========================================================================
 // RESTRUCTURED CLEAN MASTER SIMON SAYS ENGINE (simon_fsm.v)
-// Employs Shared Array Data Bus and deterministic peripheral jump handshakes.
+// HARDENED IMPLEMENTATION: Rising-Edge Press Capture Engine
 // =========================================================================
 
 module simon_fsm (
@@ -37,11 +37,10 @@ module simon_fsm (
     localparam STATE_SIMON_PLAYBACK     = 4'd3;
     localparam STATE_PLAYER_TURN        = 4'd4;
     localparam STATE_CHECK_ROUND        = 4'd5;
-    localparam STATE_CHECK_ANSWER_DELAY = 4'd6;
-    localparam STATE_MATCH_CHIME        = 4'd7;
-    localparam STATE_VICTORY_CHIME      = 4'd8;
-    localparam STATE_FAILURE_CHIME      = 4'd9;
-    localparam STATE_QUIET_LOCKOUT      = 4'd10;
+    localparam STATE_VICTORY_CHIME      = 4'd7;
+    localparam STATE_FAILURE_CHIME      = 4'd8;
+    localparam STATE_QUIET_LOCKOUT      = 4'd9;
+    localparam STATE_MATCH_CHIME        = 4'd10;
 
     // ---------------------------------------------------------------------
     // Hardware Pseudo-Random Number Generator (4-bit LFSR Engine)
@@ -57,7 +56,7 @@ module simon_fsm (
     end
 
     // Sequence Generation Rules: Row 0 is locked; Column moves randomly
-    wire [1:0] rand_row_index = 2'd0; // Locked to 0 for specific color orientation setup
+    wire [1:0] rand_row_index = 2'd0; 
     wire [1:0] rand_col_index = lfsr_reg[1:0];
     
     reg [3:0] gen_index = 0; 
@@ -80,13 +79,13 @@ module simon_fsm (
     reg [3:0]  seq_len = INIT_SEQ_LEN; 
 
     // ---------------------------------------------------------------------
-    // Edge Detection for Incremental Key Release Capturing
+    // HARDENED: Rising Edge Press Detection (Captures when key goes DOWN)
     // ---------------------------------------------------------------------
     reg any_key_pressed_d1 = 1'b0;
     always @(posedge clk) begin
         any_key_pressed_d1 <= any_key_pressed;
     end
-    wire local_step_released = (any_key_pressed_d1 && !any_key_pressed);
+    wire local_step_pressed = (any_key_pressed && !any_key_pressed_d1);
 
     // ---------------------------------------------------------------------
     // Parallel Array-to-Light Decoder Wire Mapping Links
@@ -128,12 +127,10 @@ module simon_fsm (
     end
 
     // ---------------------------------------------------------------------
-    // Symmetrical Live Translation Mapping with History Pipelining
+    // Symmetrical Live Translation Mapping
     // ---------------------------------------------------------------------
     reg [13:0] live_translated_r;
     reg [13:0] live_translated_c;
-    reg [13:0] live_translated_r_d1;
-    reg [13:0] live_translated_c_d1;
 
     always @(*) begin
         case (matrix_key_code[3:2])
@@ -164,17 +161,8 @@ module simon_fsm (
             seq_len             <= INIT_SEQ_LEN;
             play_in_simon_mode  <= 1'b0;
             player_step_counter <= 4'd0;
-            live_translated_r_d1<= 14'd0;
-            live_translated_c_d1<= 14'd0;
             match_failed        <= 1'b0;
         end else begin
-            
-            // Safe history capture window to snapshot values before release reset
-            if (any_key_pressed) begin
-                live_translated_r_d1 <= live_translated_r;
-                live_translated_c_d1 <= live_translated_c;
-            end
-
             case (state)
                 // --- 1. LOAD AND PLAY BOOTUP SCALE ---
                 STATE_BOOT_JINGLE: begin
@@ -230,6 +218,7 @@ module simon_fsm (
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= seq_len; 
 
+                    // FIX: Explicitly map every array position index [0] through [11]
                     simon_seq_r[0   +: 14] <= game_sequence_r[0];   simon_seq_c[0   +: 14] <= game_sequence_c[0];
                     simon_seq_r[14  +: 14] <= game_sequence_r[1];   simon_seq_c[14  +: 14] <= game_sequence_c[1];
                     simon_seq_r[28  +: 14] <= game_sequence_r[2];   simon_seq_c[28  +: 14] <= game_sequence_c[2];
@@ -243,19 +232,19 @@ module simon_fsm (
                     simon_seq_r[140 +: 14] <= game_sequence_r[10];  simon_seq_c[140 +: 14] <= game_sequence_c[10];
                     simon_seq_r[154 +: 14] <= game_sequence_r[11];  simon_seq_c[154 +: 14] <= game_sequence_c[11];
 
-                    play_in_simon_mode <= 1'b1;
-                    play_trigger       <= 1'b1;
+                    play_in_simon_mode <= 1'b1; 
+                    play_trigger       <= 1'b1; 
 
                     if (sequence_done) begin
                         play_trigger        <= 1'b0;
-                        play_in_simon_mode  <= 1'b0;
-                        input_lockout       <= 1'b0;
-                        player_step_counter <= 4'd0;
+                        play_in_simon_mode  <= 1'b0; 
+                        input_lockout       <= 1'b0; 
+                        player_step_counter <= 4'd0; 
                         state               <= STATE_PLAYER_TURN;
                     end
                 end
 
-                // --- 5. INTERACTIVE PLAYER INPUT WITH D1 HISTORY CAPTURE ---
+                // --- 5. INTERACTIVE PLAYER INPUT WITH RISING EDGE CAPTURE ---
                 STATE_PLAYER_TURN: begin
                     input_lockout   <= 1'b0;
                     playback_length <= 4'd1;
@@ -270,16 +259,16 @@ module simon_fsm (
                         simon_seq_c[0 +: 14] <= 14'd0;
                     end
 
-                    // Commit history registers to buffer array upon release edge detection
-                    if (local_step_released) begin
-                        if (player_step_counter < 4'd12) begin
-                            player_seq_r[player_step_counter] <= live_translated_r_d1;
-                            player_seq_c[player_step_counter] <= live_translated_c_d1;
+                    // HARDENED FIX: Commit the active keys instantly when pressed DOWN
+                    if (local_step_pressed) begin
+                        if (player_step_counter < seq_len) begin
+                            player_seq_r[player_step_counter] <= live_translated_r;
+                            player_seq_c[player_step_counter] <= live_translated_c;
                             player_step_counter               <= player_step_counter + 1'b1;
                         end
                     end
 
-                    // Watch for the 2-second global inactivity strobe to evaluate turn phrase
+                    // Watch for the 2-second global inactivity strobe to finish the turn
                     if (final_key_released) begin
                         play_trigger  <= 1'b0;
                         input_lockout <= 1'b1;
@@ -288,7 +277,6 @@ module simon_fsm (
                 end
 
                 // --- 6. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
-                // --- 6b. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
                 STATE_CHECK_ROUND: begin
                     match_failed = 1'b0;
 
@@ -312,37 +300,35 @@ module simon_fsm (
                         seq_len <= INIT_SEQ_LEN; // Reset difficulty back to 3 on a loss
                         state   <= STATE_FAILURE_CHIME;
                     end else if (seq_len >= MAX_SEQ_LEN) begin
-                        seq_len <= INIT_SEQ_LEN; // Reset difficulty back to 3 after winning the full game
-                        state   <= STATE_VICTORY_CHIME;  // Long ultimate victory chime
+                        seq_len <= INIT_SEQ_LEN; // Reset difficulty back to 3 after full win
+                        state   <= STATE_VICTORY_CHIME;
                     end else begin
-                        // Perfect sequence match! Branch to short confirmation chime first
                         state   <= STATE_MATCH_CHIME;
                     end
                 end
 
-                // --- 6c. NEW: LOAD AND PLAY SHORT ROUND-MATCH CHIME ---
+                // --- 6c. LOAD AND PLAY SHORT ROUND-MATCH CHIME ---
+                // Plays a quick, pleasant rising double-beep on successful rounds
                 STATE_MATCH_CHIME: begin
-                    playback_length <= 4'd2; // 2 quick, uplifting confirmation tones
-
-                    // A short, crisp, pleasant rising double-beep (using standard column C1)
-                    simon_seq_r[0  +: 14] <= 14'd2500; simon_seq_c[0  +: 14] <= C1; // Quick mid note
-                    simon_seq_r[14 +: 14] <= 14'd2000; simon_seq_c[14 +: 14] <= C1; // Quick higher note
-
+                    playback_length <= 4'd2;
+                    
+                    simon_seq_r[0  +: 14] <= 14'd2500; simon_seq_c[0  +: 14] <= C1;
+                    simon_seq_r[14 +: 14] <= 14'd2000; simon_seq_c[14 +: 14] <= C1;
+                    
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
                         play_trigger <= 1'b0;
-                        seq_len      <= seq_len + 1'b1; // Advance difficulty level *after* audio finishes
-                        state        <= STATE_START_DELAY; // Return to the 2-second setup delay
+                        seq_len      <= seq_len + 1'b1; // Advance level after audio stops
+                        state        <= STATE_START_DELAY;
                     end
                 end
 
                 // --- 7. LOAD AND PLAY TA-DA LONG VICTORY CHIME ---
                 STATE_VICTORY_CHIME: begin
-                    playback_length <= 4'd2; // 2 long, triumphant notes
+                    playback_length <= 4'd2;
                     
-                    // Fixed column components to C1 to enable oscillator interleaving
-                    simon_seq_r[0  +: 14] <= 14'd3500; simon_seq_c[0  +: 14] <= C1; // Note 1
-                    simon_seq_r[14 +: 14] <= 14'd1500; simon_seq_c[14 +: 14] <= C1; // Note 2 (Triumphant High)
+                    simon_seq_r[0  +: 14] <= 14'd3500; simon_seq_c[0  +: 14] <= C1;
+                    simon_seq_r[14 +: 14] <= 14'd1500; simon_seq_c[14 +: 14] <= C1;
                     
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
