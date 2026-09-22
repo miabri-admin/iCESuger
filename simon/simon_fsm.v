@@ -1,6 +1,6 @@
 // =========================================================================
 // RESTRUCTURED CLEAN MASTER SIMON SAYS ENGINE (simon_fsm.v)
-// HARDENED IMPLEMENTATION: Rising-Edge Press Capture Engine
+// HARDENED IMPLEMENTATION: Pipelined Evaluation & Registered Input Latches
 // =========================================================================
 
 module simon_fsm (
@@ -41,6 +41,7 @@ module simon_fsm (
     localparam STATE_FAILURE_CHIME      = 4'd8;
     localparam STATE_QUIET_LOCKOUT      = 4'd9;
     localparam STATE_MATCH_CHIME        = 4'd10;
+    localparam STATE_RESOLVE_MATCH      = 4'd11; // FIX A: Added dedicated evaluation cycle state
 
     // ---------------------------------------------------------------------
     // Hardware Pseudo-Random Number Generator (4-bit LFSR Engine)
@@ -148,6 +149,14 @@ module simon_fsm (
         endcase
     end
 
+    // FIX B: Dedicated input registration stage to prevent matrix wire skew
+    reg [13:0] registered_r;
+    reg [13:0] registered_c;
+    always @(posedge clk) begin
+        registered_r <= live_translated_r;
+        registered_c <= live_translated_c;
+    end
+
     // ---------------------------------------------------------------------
     // Master State Engine Main Loop Block
     // ---------------------------------------------------------------------
@@ -218,7 +227,7 @@ module simon_fsm (
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= seq_len; 
 
-                    // FIX: Explicitly map every array position index [0] through [11]
+                    // CRITICAL FIX: Restored exact array indexes [0] through [11] to point to single elements
                     simon_seq_r[0   +: 14] <= game_sequence_r[0];   simon_seq_c[0   +: 14] <= game_sequence_c[0];
                     simon_seq_r[14  +: 14] <= game_sequence_r[1];   simon_seq_c[14  +: 14] <= game_sequence_c[1];
                     simon_seq_r[28  +: 14] <= game_sequence_r[2];   simon_seq_c[28  +: 14] <= game_sequence_c[2];
@@ -251,24 +260,23 @@ module simon_fsm (
 
                     if (any_key_pressed) begin
                         play_trigger         <= 1'b1;
-                        simon_seq_r[0 +: 14] <= live_translated_r;
-                        simon_seq_c[0 +: 14] <= live_translated_c;
+                        simon_seq_r[0 +: 14] <= registered_r; // FIX B: Using clean registered input lines
+                        simon_seq_c[0 +: 14] <= registered_c;
                     end else begin
                         play_trigger         <= 1'b0;
                         simon_seq_r[0 +: 14] <= 14'd0;
                         simon_seq_c[0 +: 14] <= 14'd0;
                     end
 
-                    // HARDENED FIX: Commit the active keys instantly when pressed DOWN
+                    // FIX B: Commit data from stable synchronised register layer
                     if (local_step_pressed) begin
                         if (player_step_counter < seq_len) begin
-                            player_seq_r[player_step_counter] <= live_translated_r;
-                            player_seq_c[player_step_counter] <= live_translated_c;
+                            player_seq_r[player_step_counter] <= registered_r;
+                            player_seq_c[player_step_counter] <= registered_c;
                             player_step_counter               <= player_step_counter + 1'b1;
                         end
                     end
 
-                    // Watch for the 2-second global inactivity strobe to finish the turn
                     if (final_key_released) begin
                         play_trigger  <= 1'b0;
                         input_lockout <= 1'b1;
@@ -278,29 +286,32 @@ module simon_fsm (
 
                 // --- 6. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
                 STATE_CHECK_ROUND: begin
-                    match_failed = 1'b0;
+                    // FIX A: Resetting flag cleanly via non-blocking sequential register assignment
+                    match_failed <= 1'b0; 
 
-                    // Criterion 1: Verify total key entry step length matches
                     if (player_step_counter != seq_len) begin
-                        match_failed = 1'b1;
+                        match_failed <= 1'b1;
                     end
 
-                    // Criterion 2: Match captured tones up to current active round length
                     for (check_idx = 0; check_idx < 12; check_idx = check_idx + 1) begin
                         if (check_idx < seq_len) begin
                             if ((player_seq_r[check_idx] != game_sequence_r[check_idx]) ||
                                 (player_seq_c[check_idx] != game_sequence_c[check_idx])) begin
-                                match_failed = 1'b1;
+                                match_failed <= 1'b1;
                             end
                         end
                     end
 
-                    // Master Game Logic Core Routing Selection
+                    state <= STATE_RESOLVE_MATCH; // FIX A: Shift to next clock stage to let loop settle
+                end
+
+                // --- 6b. PIPELINED RESOLUTION STATE ---
+                STATE_RESOLVE_MATCH: begin
                     if (match_failed) begin
-                        seq_len <= INIT_SEQ_LEN; // Reset difficulty back to 3 on a loss
+                        seq_len <= INIT_SEQ_LEN; 
                         state   <= STATE_FAILURE_CHIME;
                     end else if (seq_len >= MAX_SEQ_LEN) begin
-                        seq_len <= INIT_SEQ_LEN; // Reset difficulty back to 3 after full win
+                        seq_len <= INIT_SEQ_LEN; 
                         state   <= STATE_VICTORY_CHIME;
                     end else begin
                         state   <= STATE_MATCH_CHIME;
@@ -308,7 +319,6 @@ module simon_fsm (
                 end
 
                 // --- 6c. LOAD AND PLAY SHORT ROUND-MATCH CHIME ---
-                // Plays a quick, pleasant rising double-beep on successful rounds
                 STATE_MATCH_CHIME: begin
                     playback_length <= 4'd2;
                     
@@ -318,7 +328,7 @@ module simon_fsm (
                     play_trigger <= 1'b1;
                     if (sequence_done) begin
                         play_trigger <= 1'b0;
-                        seq_len      <= seq_len + 1'b1; // Advance level after audio stops
+                        seq_len      <= seq_len + 1'b1; 
                         state        <= STATE_START_DELAY;
                     end
                 end
@@ -358,7 +368,7 @@ module simon_fsm (
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
                         delay_timer <= 0;
-                        state       <= STATE_BOOT_JINGLE; 
+                        state        <= STATE_BOOT_JINGLE; 
                     end
                     input_lockout <= 1'b1;
                 end
