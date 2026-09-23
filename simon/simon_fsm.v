@@ -1,6 +1,6 @@
 // =========================================================================
-// RESTRUCTURED CLEAN MASTER SIMON SAYS ENGINE (simon_fsm.v)
-// HARDENED IMPLEMENTATION: Pipelined Evaluation & Registered Input Latches
+// RESTRUCTURED CLEAN MASTER SIMON SAYS ENGINE (simon_fsm.v) - FULL FIXED
+// History stored exclusively as 4-bit key codes (0-15) in 1D arrays.
 // =========================================================================
 
 module simon_fsm (
@@ -41,137 +41,93 @@ module simon_fsm (
     localparam STATE_FAILURE_CHIME      = 4'd8;
     localparam STATE_QUIET_LOCKOUT      = 4'd9;
     localparam STATE_MATCH_CHIME        = 4'd10;
-    localparam STATE_RESOLVE_MATCH      = 4'd11; // FIX A: Added dedicated evaluation cycle state
+    localparam STATE_RESOLVE_MATCH      = 4'd11; 
 
-    // =========================================================================
-    // HARDENED PSEUDO-RANDOM LFSR ENGINE (Maximal Length Taps 3 and 0)
-    // =========================================================================
+    // Hardware LFSR Engine
     reg [3:0] lfsr_reg = 4'b1011; 
-    reg       lfsr_freeze = 1'b0; // Added control wire to freeze sequence during assignment
+    reg       lfsr_freeze = 1'b0; 
 
     always @(posedge clk) begin
         if (reset) begin
-            lfsr_reg <= 4'b1011; // Non-zero seed
+            lfsr_reg <= 4'b1011; 
         end else if (!lfsr_freeze) begin
-            // FIXED: Standard maximal polynomial feedback tap for a 4-bit register
             lfsr_reg <= {lfsr_reg[2:0], lfsr_reg[3] ^ lfsr_reg[0]};
         end
     end
 
-    // Use random bit combinations across both axes now to break the pattern!
-   
-   
-    // Sequence Generation Rules: Row 0 is locked; Column moves randomly
-    wire [1:0] rand_row_index = 2'd0; 
-    //wire [1:0] rand_row_index = lfsr_reg[3:2]; // Row picks out upper bits
-    wire [1:0] rand_col_index = lfsr_reg[1:0]; // Column picks out lower bits
+    // Sequence Generation Rules: Maps directly to a 0-15 flat code
+    wire [3:0] rand_key_code = lfsr_reg; 
 
     reg [3:0] gen_index = 0; 
-
-    reg [3:0]  state = STATE_BOOT_JINGLE;
+    reg [3:0] state = STATE_BOOT_JINGLE;
     reg [24:0] delay_timer = 0;
 
-    // Simon Game Master Sequences
-    reg [13:0] game_sequence_r [0:11];
-    reg [13:0] game_sequence_c [0:11];
-    
-    // Player Input History Capture Buffers
-    reg [13:0] player_seq_r [0:11];
-    reg [13:0] player_seq_c [0:11];
-    reg [3:0]  player_step_counter = 0; 
+    // REFOCUSED SINGLE ARRAYS: Storing clean 4-bit codes (0-15)
+    reg [3:0] game_sequence [0:11];
+    reg [3:0] player_seq    [0:11];
+    reg [3:0] player_step_counter = 0; 
 
     localparam INIT_SEQ_LEN = 4'd2;         
     localparam MAX_SEQ_LEN  = 4'd12;        
-
     reg [3:0]  seq_len = INIT_SEQ_LEN; 
 
-    // ---------------------------------------------------------------------
-    // HARDENED: Rising Edge Press Detection (Captures when key goes DOWN)
-    // ---------------------------------------------------------------------
+    // Falling Edge Capture (Detects exactly when user RELEASES a key)
     reg any_key_pressed_d1 = 1'b0;
     always @(posedge clk) begin
         any_key_pressed_d1 <= any_key_pressed;
     end
-    wire local_step_pressed = (any_key_pressed && !any_key_pressed_d1);
+    wire local_key_released = (!any_key_pressed && any_key_pressed_d1);
 
-    // ---------------------------------------------------------------------
-    // Parallel Array-to-Light Decoder Wire Mapping Links
-    // ---------------------------------------------------------------------
-    wire [13:0] current_step_r = game_sequence_r[audio_play_step];
-    wire [13:0] current_step_c = game_sequence_c[audio_play_step];
-
-    reg [1:0] light_row;
-    reg [1:0] light_col;
-
-    // Loop indexing and validation registers
-    reg        match_failed;
-    integer    check_idx;
-
-    always @(*) begin
-        case (current_step_r)
-            R1:      light_row = 2'd0;
-            R2:      light_row = 2'd1;
-            R3:      light_row = 2'd2;
-            R4:      light_row = 2'd3;
-            default: light_row = 2'd0;
-        endcase
-
-        case (current_step_c)
-            C1:      light_col = 2'd0;
-            C2:      light_col = 2'd1;
-            C3:      light_col = 2'd2;
-            C4:      light_col = 2'd3;
-            default: light_col = 2'd0;
-        endcase
-    end
-
+    // Keep track of what key was physically held down prior to release
+    reg [3:0] held_key_latched = 4'd0;
     always @(posedge clk) begin
-        if (state == STATE_SIMON_PLAYBACK) begin
-            // If the audio engine's current step targets are completely clear (0), 
-            // it means we are inside the 600ms AUDIO_GAP window. Clear the light and key code.
-            if ((current_step_r == 14'd0) || (current_step_c == 14'd0)) begin
-                simon_active_key <= 5'd16; // Force Idle Off during the inter-note gap
-            end else begin
-                simon_active_key <= (light_row * 3'd4) + light_col; // Display note when active
-            end
-        end else begin
-            simon_active_key <= 5'd16; // Default to idle out of playback
+        if (any_key_pressed && (matrix_key_code != 5'd16)) begin
+            held_key_latched <= matrix_key_code[3:0];
         end
     end
 
     // ---------------------------------------------------------------------
-    // Symmetrical Live Translation Mapping
+    // Parallel Array-to-Light Decoder Wire Mapping Links
     // ---------------------------------------------------------------------
-    reg [13:0] live_translated_r;
-    reg [13:0] live_translated_c;
-
-    always @(*) begin
-        case (matrix_key_code[3:2])
-            2'd0:    live_translated_r = R1;
-            2'd1:    live_translated_r = R2;
-            2'd2:    live_translated_r = R3;
-            default: live_translated_r = R4;
-        endcase
-
-        case (matrix_key_code[1:0])
-            2'd0:    live_translated_c = C1;
-            2'd1:    live_translated_c = C2;
-            2'd2:    live_translated_c = C3;
-            default: live_translated_c = C4;
-        endcase
-    end
-
-    // FIX B: Dedicated input registration stage to prevent matrix wire skew
-    reg [13:0] registered_r;
-    reg [13:0] registered_c;
     always @(posedge clk) begin
-        registered_r <= live_translated_r;
-        registered_c <= live_translated_c;
+        if (state == STATE_SIMON_PLAYBACK) begin
+            // Read directly from your single unified 4-bit array slot
+            simon_active_key <= {1'b0, game_sequence[audio_play_step]};
+        end else begin
+            simon_active_key <= 5'd16; 
+        end
     end
 
-    // ---------------------------------------------------------------------
-    // Master State Engine Main Loop Block
-    // ---------------------------------------------------------------------
+    // Helper Function to translate 4-bit codes to 14-bit Row Frequencies
+    function [13:0] get_row_freq;
+        input [3:0] key;
+        begin
+            case (key[3:2])
+                2'd0: get_row_freq = R1;
+                2'd1: get_row_freq = R2;
+                2'd2: get_row_freq = R3;
+                default: get_row_freq = R4;
+            endcase
+        end
+    endfunction
+
+    // Helper Function to translate 4-bit codes to 14-bit Column Frequencies
+    function [13:0] get_col_freq;
+        input [3:0] key;
+        begin
+            case (key[1:0])
+                2'd0: get_col_freq = C1;
+                2'd1: get_col_freq = C2;
+                2'd2: get_col_freq = C3;
+                default: get_col_freq = C4;
+            endcase
+        end
+    endfunction
+
+    // Master state tracking logic
+    reg        match_failed;
+    integer    check_idx;
+
     always @(posedge clk) begin
         if (reset) begin
             state               <= STATE_BOOT_JINGLE;
@@ -183,12 +139,11 @@ module simon_fsm (
             play_in_simon_mode  <= 1'b0;
             player_step_counter <= 4'd0;
             match_failed        <= 1'b0;
-    lfsr_freeze <= 1'b0;
+            lfsr_freeze         <= 1'b0;
         end else begin
-            lfsr_freeze <= 1'b0; // Default: LFSR ticks continuously creating true user entropy
+            lfsr_freeze <= 1'b0; 
 
             case (state)
-                // --- 1. LOAD AND PLAY BOOTUP SCALE ---
                 STATE_BOOT_JINGLE: begin
                     input_lockout   <= 1'b1;
                     playback_length <= 4'd4; 
@@ -205,7 +160,6 @@ module simon_fsm (
                     end
                 end
 
-                // --- 2. THE 2-SECOND DELAY WINDOW ---
                 STATE_START_DELAY: begin
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
@@ -215,23 +169,11 @@ module simon_fsm (
                     end
                 end
 
-                // --- 3. DYNAMIC GENERATOR SETUP (FIXED OVERWRITE PROPAGATION) ---
                 STATE_GEN_SEQUENCE: begin
-                    lfsr_freeze <= 1'b1; // FREEZE the LFSR so it doesn't change mid-assignment!
+                    lfsr_freeze <= 1'b1; 
 
-                    case (rand_row_index)
-                        2'd0:    game_sequence_r[gen_index] <= R1;
-                        2'd1:    game_sequence_r[gen_index] <= R2;
-                        2'd2:    game_sequence_r[gen_index] <= R3;
-                        2'd3:    game_sequence_r[gen_index] <= R4;
-                    endcase
-
-                    case (rand_col_index)
-                        2'd0:    game_sequence_c[gen_index] <= C1;
-                        2'd1:    game_sequence_c[gen_index] <= C2;
-                        2'd2:    game_sequence_c[gen_index] <= C3;
-                        2'd3:    game_sequence_c[gen_index] <= C4;
-                    endcase
+                    // Storing a simple unified 4-bit key layout (0-15)
+                    game_sequence[gen_index] <= rand_key_code;
 
                     if (gen_index >= 4'd11) begin
                         gen_index <= 0;
@@ -241,57 +183,51 @@ module simon_fsm (
                     end
                 end
                 
-                // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
                 STATE_SIMON_PLAYBACK: begin
-                    playback_length <= seq_len; 
-
-                    // CRITICAL FIX: Restored exact array indexes [0] through [11] to point to single elements
-                    simon_seq_r[0   +: 14] <= game_sequence_r[0];   simon_seq_c[0   +: 14] <= game_sequence_c[0];
-                    simon_seq_r[14  +: 14] <= game_sequence_r[1];   simon_seq_c[14  +: 14] <= game_sequence_c[1];
-                    simon_seq_r[28  +: 14] <= game_sequence_r[2];   simon_seq_c[28  +: 14] <= game_sequence_c[2];
-                    simon_seq_r[42  +: 14] <= game_sequence_r[3];   simon_seq_c[42  +: 14] <= game_sequence_c[3];
-                    simon_seq_r[56  +: 14] <= game_sequence_r[4];   simon_seq_c[56  +: 14] <= game_sequence_c[4];
-                    simon_seq_r[70  +: 14] <= game_sequence_r[5];   simon_seq_c[70  +: 14] <= game_sequence_c[5];
-                    simon_seq_r[84  +: 14] <= game_sequence_r[6];   simon_seq_c[84  +: 14] <= game_sequence_c[6];
-                    simon_seq_r[98  +: 14] <= game_sequence_r[7];   simon_seq_c[98  +: 14] <= game_sequence_c[7];
-                    simon_seq_r[112 +: 14] <= game_sequence_r[8];   simon_seq_c[112 +: 14] <= game_sequence_c[8];
-                    simon_seq_r[126 +: 14] <= game_sequence_r[9];   simon_seq_c[126 +: 14] <= game_sequence_c[9];
-                    simon_seq_r[140 +: 14] <= game_sequence_r[10];  simon_seq_c[140 +: 14] <= game_sequence_c[10];
-                    simon_seq_r[154 +: 14] <= game_sequence_r[11];  simon_seq_c[154 +: 14] <= game_sequence_c[11];
-
+                    playback_length    <= seq_len; 
                     play_in_simon_mode <= 1'b1; 
                     play_trigger       <= 1'b1; 
+
+                    // Dynamically map frequencies over the bus right out of the simple 4-bit array cells
+                    for (check_idx = 0; check_idx < 12; check_idx = check_idx + 1) begin
+                        simon_seq_r[check_idx*14 +: 14] <= get_row_freq(game_sequence[check_idx]);
+                        simon_seq_c[check_idx*14 +: 14] <= get_col_freq(game_sequence[check_idx]);
+                    end
 
                     if (sequence_done) begin
                         play_trigger        <= 1'b0;
                         play_in_simon_mode  <= 1'b0; 
                         input_lockout       <= 1'b0; 
                         player_step_counter <= 4'd0; 
-                        state               <= STATE_PLAYER_TURN;
+                        
+                        // Wipe player array 
+                        for (check_idx = 0; check_idx < 12; check_idx = check_idx + 1) begin
+                            player_seq[check_idx] <= 4'd0;
+                        end
+                        state <= STATE_PLAYER_TURN;
                     end
                 end
 
-                // --- 5. INTERACTIVE PLAYER INPUT WITH RISING EDGE CAPTURE ---
                 STATE_PLAYER_TURN: begin
                     input_lockout   <= 1'b0;
                     playback_length <= 4'd1;
 
-                    if (any_key_pressed) begin
+                    // LIVE USER SOUND FEEDBACK: Pipe exactly one note down step 0 when pressed
+                    if (any_key_pressed && (matrix_key_code != 5'd16)) begin
                         play_trigger         <= 1'b1;
-                        simon_seq_r[0 +: 14] <= registered_r; // FIX B: Using clean registered input lines
-                        simon_seq_c[0 +: 14] <= registered_c;
+                        simon_seq_r[0 +: 14] <= get_row_freq(matrix_key_code[3:0]);
+                        simon_seq_c[0 +: 14] <= get_col_freq(matrix_key_code[3:0]);
                     end else begin
                         play_trigger         <= 1'b0;
                         simon_seq_r[0 +: 14] <= 14'd0;
                         simon_seq_c[0 +: 14] <= 14'd0;
                     end
 
-                    // FIX B: Commit data from stable synchronised register layer
-                    if (local_step_pressed) begin
+                    // FIXED: Commit keystroke into your simple array strictly ON RELEASE edge
+                    if (local_key_released) begin
                         if (player_step_counter < seq_len) begin
-                            player_seq_r[player_step_counter] <= registered_r;
-                            player_seq_c[player_step_counter] <= registered_c;
-                            player_step_counter               <= player_step_counter + 1'b1;
+                            player_seq[player_step_counter] <= held_key_latched;
+                            player_step_counter             <= player_step_counter + 1'b1;
                         end
                     end
 
@@ -302,98 +238,88 @@ module simon_fsm (
                     end
                 end
 
-                // --- 6. VALIDATE PLAYER PHRASE AGAINST GAME MEMORY ---
                 STATE_CHECK_ROUND: begin
-                    // FIX A: Resetting flag cleanly via non-blocking sequential register assignment
                     match_failed <= 1'b0; 
 
                     if (player_step_counter != seq_len) begin
                         match_failed <= 1'b1;
                     end
 
+                    // Clean, atomic comparative layout loops
                     for (check_idx = 0; check_idx < 12; check_idx = check_idx + 1) begin
                         if (check_idx < seq_len) begin
-                            if ((player_seq_r[check_idx] != game_sequence_r[check_idx]) ||
-                                (player_seq_c[check_idx] != game_sequence_c[check_idx])) begin
+                            if (player_seq[check_idx] != game_sequence[check_idx]) begin
                                 match_failed <= 1'b1;
-                            end
-                        end
-                    end
+                            end // <--- Closes: if (player_seq != game_sequence)
+                        end // <--- Closes: if (check_idx < seq_len)
+                    end // <--- Closes: for (check_idx = 0...)
 
-                    state <= STATE_RESOLVE_MATCH; // FIX A: Shift to next clock stage to let loop settle
-                end
+                    state <= STATE_RESOLVE_MATCH;
+                end // <--- Closes: STATE_CHECK_ROUND: begin
 
-                // --- 6b. PIPELINED RESOLUTION STATE ---
                 STATE_RESOLVE_MATCH: begin
                     if (match_failed) begin
-                        seq_len <= INIT_SEQ_LEN; 
+                        seq_len <= INIT_SEQ_LEN;
                         state   <= STATE_FAILURE_CHIME;
                     end else if (seq_len >= MAX_SEQ_LEN) begin
-                        seq_len <= INIT_SEQ_LEN; 
+                        seq_len <= INIT_SEQ_LEN;
                         state   <= STATE_VICTORY_CHIME;
                     end else begin
                         state   <= STATE_MATCH_CHIME;
                     end
                 end
 
-                // --- 6c. LOAD AND PLAY SHORT ROUND-MATCH CHIME ---
                 STATE_MATCH_CHIME: begin
                     playback_length <= 4'd2;
-                    
                     simon_seq_r[0  +: 14] <= 14'd2500; simon_seq_c[0  +: 14] <= C1;
                     simon_seq_r[14 +: 14] <= 14'd2000; simon_seq_c[14 +: 14] <= C1;
-                    
                     play_trigger <= 1'b1;
+                    
                     if (sequence_done) begin
                         play_trigger <= 1'b0;
-                        seq_len      <= seq_len + 1'b1; 
+                        seq_len      <= seq_len + 1'b1;
                         state        <= STATE_START_DELAY;
                     end
                 end
 
-                // --- 7. LOAD AND PLAY TA-DA LONG VICTORY CHIME ---
                 STATE_VICTORY_CHIME: begin
                     playback_length <= 4'd2;
-                    
                     simon_seq_r[0  +: 14] <= 14'd3500; simon_seq_c[0  +: 14] <= C1;
                     simon_seq_r[14 +: 14] <= 14'd1500; simon_seq_c[14 +: 14] <= C1;
-                    
                     play_trigger <= 1'b1;
+                    
                     if (sequence_done) begin
                         play_trigger <= 1'b0;
                         state        <= STATE_QUIET_LOCKOUT;
                     end
                 end
 
-                // --- 8. LOAD AND PLAY LOW WAH-WAH-WAH FAIL CHIME ---
                 STATE_FAILURE_CHIME: begin
                     playback_length <= 4'd4;
-                    
                     simon_seq_r[0   +: 14] <= 14'd10000; simon_seq_c[0   +: 14] <= 14'd0;
                     simon_seq_r[14  +: 14] <= 14'd11500; simon_seq_c[14  +: 14] <= 14'd0;
                     simon_seq_r[28  +: 14] <= 14'd13000; simon_seq_c[28  +: 14] <= 14'd0;
                     simon_seq_r[42  +: 14] <= 14'd15500; simon_seq_c[42  +: 14] <= 14'd0;
-                    
                     play_trigger <= 1'b1;
+                    
                     if (sequence_done) begin
                         play_trigger <= 1'b0;
                         state        <= STATE_QUIET_LOCKOUT;
                     end
                 end
 
-                // --- 9. LOCKOUT COOL DOWN STATE ---
                 STATE_QUIET_LOCKOUT: begin
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
                         delay_timer <= 0;
-                        state        <= STATE_BOOT_JINGLE; 
+                        state       <= STATE_BOOT_JINGLE;
                     end
                     input_lockout <= 1'b1;
                 end
 
                 default: state <= STATE_BOOT_JINGLE;
             endcase
-        end
     end
+end
 
 endmodule
