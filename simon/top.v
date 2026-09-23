@@ -143,12 +143,12 @@ module top (
     );
 
     // ---------------------------------------------------------------------
-    // 6. DYNAMIC USB UART PACKET CONTROLLER
+    // 6. PIPELINED INDEX-DRIVEN USB UART PACKET CONTROLLER
     // ---------------------------------------------------------------------
     localparam CLK_PER_BIT = 104; // 115200 Baud @ 12MHz Clock
     
-    // Packet configuration: "KEY:XX\r\n" (Total 8 bytes long)
-    reg [7:0] message [0:7];
+    // Flat 64-bit packed shift register to cleanly hold: "KEY:XX\r\n"
+    reg [63:0] tx_string = 64'd0;
     
     reg [31:0] clk_counter = 0;
     reg [3:0]  bit_index = 0;
@@ -160,11 +160,22 @@ module top (
     reg [23:0] delay_counter = 0;
     reg        delay_done = 0;
     
-    // Variable tracking to identify immediate value transitions
-    reg [4:0]  last_target_code = 5'h1F; 
-    reg        last_play_trigger = 1'b0; // Added tracking for the audio trigger edge
+    // Step Index Tracking Registers to isolate duplicate notes cleanly
+    reg [3:0]  last_simon_step  = 4'hF;
+    reg [3:0]  last_player_step = 4'hF;
+    reg        last_input_mode  = 1'b0;
 
-    // Pure helper function: Transforms binary value to Hexadecimal character code
+    // HARDENED PIPELINE LAYER: Delays the step triggers by 1 cycle
+    // This allows the FSM memory arrays to settle completely before the UART reads them.
+    reg [3:0] audio_play_step_d1     = 4'hF;
+    reg [3:0] player_step_counter_d1 = 4'hF;
+
+    always @(posedge clk) begin
+        audio_play_step_d1     <= audio_play_step;
+        player_step_counter_d1 <= u_simon_fsm.player_step_counter;
+    end
+
+    // Pure helper function: Transforms a 4-bit binary nibble into a hex ASCII character byte
     function [7:0] to_hex;
         input [3:0] val;
         begin
@@ -174,6 +185,7 @@ module top (
 
     always @(posedge clk) begin
         if (!delay_done) begin
+            // State 0: Wait for hardware/USB CDC lines to stabilize
             tx_pin <= 1'b1; 
             if (delay_counter < 2000000) begin
                 delay_counter <= delay_counter + 1;
@@ -182,55 +194,104 @@ module top (
                 tx_state      <= 2'd1;
             end
         end else if (tx_state == 2'd1) begin
+            // State 1: Active checking loop using delayed pointer steps
             tx_pin     <= 1'b1;
             char_index <= 0;
             
-            // Standard check: only trigger on code changes, ignoring idle/release (5'h10)
-            if ((target_light_code != last_target_code) && (target_light_code != 5'h10)) begin
-                last_target_code <= target_light_code;
+            if (input_lockout) begin
+                // --- SIMON'S TURN: Trigger when Simon advances to a new delayed index step ---
+                if ((audio_play_step_d1 != last_simon_step) && (target_light_code != 5'h10)) begin
+                    last_simon_step  <= audio_play_step_d1;
+                    last_input_mode  <= 1'b1;
+                    
+                    // Pack the full string instantly into the flat 64-bit bus register (Big Endian)
+                    tx_string[63:56] <= "K";
+                    tx_string[55:48] <= "E";
+                    tx_string[47:40] <= "Y";
+                    tx_string[39:32] <= ":";
+                    tx_string[31:24] <= to_hex({2'b00, target_light_code[4:3]}); // Dynamic row identifier
+                    tx_string[23:16] <= to_hex(target_light_code[3:0]);         // Dynamic column identifier
+                    tx_string[15:8]  <= "\r";
+                    tx_string[7:0]   <= "\n";
+                    
+                    tx_data     <= "K"; // Seed the first bitstream byte
+                    bit_index   <= 0;
+                    clk_counter <= 0;
+                    tx_state    <= 2'd2; // Jump to serial transmitter engine
+                end
+            end else begin
+                // --- PLAYER'S TURN: Reset Simon's tracking index when turn switches ---
+                if (last_input_mode == 1'b1) begin
+                    last_simon_step <= 4'hF;
+                    last_input_mode <= 1'b0;
+                end
+
+                // Trigger exactly when the player successfully registers a delayed input step change
+                if ((player_step_counter_d1 != last_player_step) && (matrix_key_code != 5'h10)) begin
+                    last_player_step <= player_step_counter_d1;
+                    
+                    // Pack the active user keystroke coordinates instantly
+                    tx_string[63:56] <= "K";
+                    tx_string[55:48] <= "E";
+                    tx_string[47:40] <= "Y";
+                    tx_string[39:32] <= ":";
+                    tx_string[31:24] <= to_hex({3'b000, matrix_key_code[4]}); 
+                    tx_string[23:16] <= to_hex(matrix_key_code[3:0]);        
+                    tx_string[15:8]  <= "\r";
+                    tx_string[7:0]   <= "\n";
+                    
+                    tx_data     <= "K";
+                    bit_index   <= 0;
+                    clk_counter <= 0;
+                    tx_state    <= 2'd2;
+                end
                 
-                message[0] <= "K"; 
-                message[1] <= "E"; 
-                message[2] <= "Y"; 
-                message[3] <= ":";
-                message[4] <= to_hex({3'b000, target_light_code[4]});
-                message[5] <= to_hex(target_light_code[3:0]);
-                message[6] <= "\r"; 
-                message[7] <= "\n";
-                
-                tx_data     <= "K"; 
-                bit_index   <= 0;
-                clk_counter <= 0;
-                tx_state    <= 2'd2;
-            end else if (target_light_code == 5'h10) begin
-                last_target_code <= 5'h10;
+                // Clear the latch on release so rapid tapping can register on same step count if needed
+                if (matrix_key_code == 5'h10) begin
+                    last_player_step <= 4'hF;
+                end
             end
+            
         end else begin
+            // State 2: Bitstream Serialization Engine (Unpacking flat vector array data)
             if (clk_counter < CLK_PER_BIT - 1) begin
                 clk_counter <= clk_counter + 1;
             end else begin
                 clk_counter <= 0;
+                
                 if (bit_index == 0) begin
-                    tx_pin    <= 1'b0;
+                    tx_pin    <= 1'b0; // Start Bit
                     bit_index <= bit_index + 1;
                 end else if (bit_index >= 1 && bit_index <= 8) begin
-                    tx_pin    <= tx_data[bit_index - 1];
+                    tx_pin    <= tx_data[bit_index - 1]; // Serial data payload (LSB first)
                     bit_index <= bit_index + 1;
                 end else if (bit_index == 9) begin
-                    tx_pin    <= 1'b1;
+                    tx_pin    <= 1'b1; // Stop Bit
                     bit_index <= bit_index + 1;
                 end else begin
+                    // Shift pointer sequentially across the flat 8-byte packed text register
                     if (char_index < 7) begin
                         char_index <= char_index + 1;
-                        tx_data    <= message[char_index + 1];
-                        bit_index  <= 0;
+                        
+                        // Dynamically extract the next 8-bit slice character byte out of the packed string vector
+                        case (char_index + 1)
+                            3'd1: tx_data <= tx_string[55:48]; // "E"
+                            3'd2: tx_data <= tx_string[47:40]; // "Y"
+                            3'd3: tx_data <= tx_string[39:32]; // ":"
+                            3'd4: tx_data <= tx_string[31:24]; // Hex Digit 1
+                            3'd5: tx_data <= tx_string[23:16]; // Hex Digit 2
+                            3'd6: tx_data <= tx_string[15:8];  // "\r"
+                            3'd7: tx_data <= tx_string[7:0];   // "\n"
+                            default: tx_data <= "\n";
+                        endcase
+                        
+                        bit_index <= 0;
                     end else begin
-                        tx_state   <= 2'd1;
+                        tx_state  <= 2'd1; // Transmission chain clear, return to scanning state
                     end
                 end
             end
         end
     end
-
 
 endmodule
