@@ -177,19 +177,24 @@ module simon_fsm (
                     end
                 end
 
+                // --- 3. DYNAMIC GENERATOR SETUP (FIXED FREEZE LOOP LOCKOUT) ---
                 STATE_GEN_SEQUENCE: begin
-                    lfsr_freeze <= 1'b1; 
+                    // Unfreeze the LFSR for exactly one clock edge to advance the random number
+                    lfsr_freeze <= 1'b0; 
 
-                    // Storing a simple unified 4-bit key layout (0-15)
-                    game_sequence[gen_index] <= (rand_row_index * 3'd4) + rand_col_index;
+                    // Assign the fresh random column key code into the current array slot index
+                    // (rand_row_index is 2'd0, so this maps strictly to keys 0, 1, 2, or 3)
+                    game_sequence[gen_index] <= {2'b00, rand_col_index};
 
                     if (gen_index >= 4'd11) begin
-                        gen_index <= 0;
-                        state     <= STATE_SIMON_PLAYBACK;
+                        gen_index   <= 0;
+                        lfsr_freeze <= 1'b1; // Lock the generator down tightly before playback begins
+                        state       <= STATE_SIMON_PLAYBACK;
                     end else begin
-                        gen_index <= gen_index + 1'b1;
+                        gen_index   <= gen_index + 1'b1;
                     end
                 end
+
                 
                 STATE_SIMON_PLAYBACK: begin
                     playback_length    <= seq_len; 
