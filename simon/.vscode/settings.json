@@ -1,0 +1,20 @@
+{
+    "cSpell.words": [
+        "Bitstream",
+        "BOOTUP",
+        "davidsiaw",
+        "DTMF",
+        "endcase",
+        "endfunction",
+        "endmodule",
+        "lfsr",
+        "localparam",
+        "nextpnr",
+        "PMOD",
+        "posedge",
+        "pullup",
+        "synchronised",
+        "UART",
+        "yosys"
+    ]
+}
