@@ -8,7 +8,15 @@ set_io led_b        41
 
 # Test Pins exclusively on PMOD1 and PMOD3
 set_io test_out0     10  # PMOD1 Pin 1 (Top Row Output)
-set_io test_out1     6   # PMOD1 Pin 2 (Top Row Output)
+
+# set_io test_out1     6   # PMOD1 Pin 2 (Top Row Output)
+
+# Keep USB UART on its dedicated physical debugger route
+# MOVE the conflicting keypad pin to an open slot (e.g., Pin 9)
+set_io test_out1 9
+
+# (Leave your other test_out and test_in pins as they were, ensuring none equal 6)
+
 set_io test_out2     3   # PMOD1 Pin 3 (Top Row Output)
 set_io test_out3     48  # PMOD1 Pin 4 (Top Row Output)
 
@@ -29,3 +37,9 @@ set_io audio_r      38   # PMOD2 Pin 2: Right Channel Main Gain Control
 # Extra auxiliary bindings to ensure the module amplifier stays awake
 set_io amp_power    28   # PMOD2 Pin 4: Amplifier ~SHUTDOWN (Drawn High in Top.v)
 set_io audio_p3     32   # PMOD2 Pin 3: NC / Clear Line
+
+
+
+# Hardware UART linked straight to the Type-C USB via iCELink
+set_io tx_pin 6
+set_io rx_pin 4

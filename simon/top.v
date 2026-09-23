@@ -12,9 +12,11 @@ module top (
 
     // Physical Onboard Signaling Outputs
     output led_r, led_g, led_b,
-    output audio_l, audio_r
+    output audio_l, audio_r,
+  
+    // FIXED: Added the physical USB physical pin connection to the port list
+    output reg tx_pin 
 );
-
     // ---------------------------------------------------------------------
     // Interconnecting Wire Routing Links (Internal System Buses)
     // ---------------------------------------------------------------------
@@ -129,5 +131,66 @@ module top (
         .led_g           (led_g),
         .led_b           (led_b)
     );
+
+    // Baud rate generator parameters for 115200 baud (12,000,000 / 115,200 ≈ 104)
+    localparam CLK_PER_BIT = 104;
+    
+    // Message buffer: "Hello World!\r\n" (14 bytes)
+    reg [7:0] message [0:13];
+    initial begin
+        message[0]  = "H"; message[1]  = "E"; message[2]  = "l"; message[3]  = "L";
+        message[4]  = "o"; message[5]  = " "; message[6]  = "W"; message[7]  = "o";
+        message[8]  = "r"; message[9]  = "l"; message[10] = "d"; message[11] = "!";
+        message[12] = "\r"; message[13] = "\n";
+    end
+
+    reg [31:0] clk_counter = 0;
+    reg [3:0] bit_index = 0;
+    reg [3:0] char_index = 0;
+    reg [7:0] tx_data = 0;
+    reg tx_state = 0; // 0: Idle/Load, 1: Transmitting
+
+    reg [23:0] delay_counter = 0;
+    reg delay_done = 0;
+
+    always @(posedge clk) begin
+        if (!delay_done) begin
+            // Wait for the line to stabilize before doing anything
+            tx_pin <= 1; // Keep TX high (IDLE state for UART)
+            if (delay_counter < 2000000) begin
+                delay_counter <= delay_counter + 1;
+            end else begin
+                delay_done <= 1;
+            end
+        end else if (tx_state == 0) begin
+            tx_pin <= 1; // Hold TX high while waiting/loading
+            if (char_index < 14) begin
+                tx_data <= message[char_index];
+                bit_index <= 0;
+                clk_counter <= 0;
+                tx_state <= 1;
+            end
+        end else begin
+            if (clk_counter < CLK_PER_BIT - 1) begin
+                clk_counter <= clk_counter + 1;
+            end else begin
+                clk_counter <= 0;
+                if (bit_index == 0) begin
+                    tx_pin <= 0; // Start bit (safe now because tx_data had a cycle to load)
+                    bit_index <= bit_index + 1;
+                end else if (bit_index >= 1 && bit_index <= 8) begin
+                    tx_pin <= tx_data[bit_index - 1]; // Data bits (LSB first)
+                    bit_index <= bit_index + 1;
+                end else if (bit_index == 9) begin
+                    tx_pin <= 1; // Stop bit
+                    bit_index <= bit_index + 1;
+                end else begin
+                    char_index <= char_index + 1;
+                    tx_state <= 0; // Return to idle to load next character
+                end
+            end
+        end
+    end
+
 
 endmodule
