@@ -43,23 +43,29 @@ module simon_fsm (
     localparam STATE_MATCH_CHIME        = 4'd10;
     localparam STATE_RESOLVE_MATCH      = 4'd11; // FIX A: Added dedicated evaluation cycle state
 
-    // ---------------------------------------------------------------------
-    // Hardware Pseudo-Random Number Generator (4-bit LFSR Engine)
-    // ---------------------------------------------------------------------
+    // =========================================================================
+    // HARDENED PSEUDO-RANDOM LFSR ENGINE (Maximal Length Taps 3 and 0)
+    // =========================================================================
     reg [3:0] lfsr_reg = 4'b1011; 
+    reg       lfsr_freeze = 1'b0; // Added control wire to freeze sequence during assignment
 
     always @(posedge clk) begin
         if (reset) begin
-            lfsr_reg <= 4'b1011;   
-        end else begin
-            lfsr_reg <= {lfsr_reg[2:0], lfsr_reg[3] ^ lfsr_reg[2]};
+            lfsr_reg <= 4'b1011; // Non-zero seed
+        end else if (!lfsr_freeze) begin
+            // FIXED: Standard maximal polynomial feedback tap for a 4-bit register
+            lfsr_reg <= {lfsr_reg[2:0], lfsr_reg[3] ^ lfsr_reg[0]};
         end
     end
 
+    // Use random bit combinations across both axes now to break the pattern!
+   
+   
     // Sequence Generation Rules: Row 0 is locked; Column moves randomly
     wire [1:0] rand_row_index = 2'd0; 
-    wire [1:0] rand_col_index = lfsr_reg[1:0];
-    
+    //wire [1:0] rand_row_index = lfsr_reg[3:2]; // Row picks out upper bits
+    wire [1:0] rand_col_index = lfsr_reg[1:0]; // Column picks out lower bits
+
     reg [3:0] gen_index = 0; 
 
     reg [3:0]  state = STATE_BOOT_JINGLE;
@@ -121,9 +127,15 @@ module simon_fsm (
 
     always @(posedge clk) begin
         if (state == STATE_SIMON_PLAYBACK) begin
-            simon_active_key <= (light_row * 3'd4) + light_col;
+            // If the audio engine's current step targets are completely clear (0), 
+            // it means we are inside the 600ms AUDIO_GAP window. Clear the light and key code.
+            if ((current_step_r == 14'd0) || (current_step_c == 14'd0)) begin
+                simon_active_key <= 5'd16; // Force Idle Off during the inter-note gap
+            end else begin
+                simon_active_key <= (light_row * 3'd4) + light_col; // Display note when active
+            end
         end else begin
-            simon_active_key <= 5'd16; 
+            simon_active_key <= 5'd16; // Default to idle out of playback
         end
     end
 
@@ -171,7 +183,10 @@ module simon_fsm (
             play_in_simon_mode  <= 1'b0;
             player_step_counter <= 4'd0;
             match_failed        <= 1'b0;
+    lfsr_freeze <= 1'b0;
         end else begin
+            lfsr_freeze <= 1'b0; // Default: LFSR ticks continuously creating true user entropy
+
             case (state)
                 // --- 1. LOAD AND PLAY BOOTUP SCALE ---
                 STATE_BOOT_JINGLE: begin
@@ -195,12 +210,15 @@ module simon_fsm (
                     delay_timer <= delay_timer + 1'b1;
                     if (delay_timer >= 25'd23_999_999) begin
                         delay_timer <= 0;
+                        gen_index   <= 0;
                         state       <= STATE_GEN_SEQUENCE;
                     end
                 end
 
-                // --- 3. DYNAMIC GENERATOR SETUP ---
+                // --- 3. DYNAMIC GENERATOR SETUP (FIXED OVERWRITE PROPAGATION) ---
                 STATE_GEN_SEQUENCE: begin
+                    lfsr_freeze <= 1'b1; // FREEZE the LFSR so it doesn't change mid-assignment!
+
                     case (rand_row_index)
                         2'd0:    game_sequence_r[gen_index] <= R1;
                         2'd1:    game_sequence_r[gen_index] <= R2;
@@ -222,7 +240,7 @@ module simon_fsm (
                         gen_index <= gen_index + 1'b1;
                     end
                 end
-
+                
                 // --- 4. LOAD CURRENT ROUND RANDOM NOTES DYNAMICALLY ---
                 STATE_SIMON_PLAYBACK: begin
                     playback_length <= seq_len; 

@@ -106,15 +106,30 @@ module top (
     // ---------------------------------------------------------------------
     // 4. FIXED Combinatorial Light Arbitration (No added register delays)
     // ---------------------------------------------------------------------
+    // =====================================================================
+    // 4. FIXED Combinatorial Light Arbitration (HARDENED REPEATED NOTE FILTER)
+    // =====================================================================
     always @(*) begin
         if (input_lockout) begin
-            // System playback mode: Route the rock-solid clocked code straight out
-            target_light_code = simon_active_key;
+            // --- SYSTEM PLAYBACK PHASE ---
+            if (play_trigger && !play_in_simon_mode) begin
+                // Playing normal FSM notifications (Boot, Win, Fail Chimes)
+                target_light_code = simon_active_key;
+            end else if (play_trigger && play_in_simon_mode) begin
+                // Simon is actively playing a valid phrase note: Output the code
+                target_light_code = simon_active_key;
+            end else begin
+                // AUDIO ENGINE IS IN THE AUDIO_GAP SILENCE WINDOW: Force idle code!
+                // This breaks the text lockout for consecutive duplicate notes cleanly.
+                target_light_code = 5'd16; 
+            end
         end else begin
-            // User entry mode: Map live button taps directly
+            // --- ACTIVE USER INTERACTIVE PHASE ---
+            // Map live button taps directly (Suppresses release spam automatically)
             target_light_code = matrix_key_code;
         end
     end
+
 
     // ---------------------------------------------------------------------
     // 5. Instantiation: PWM Visual Light Module Look-up
@@ -147,6 +162,7 @@ module top (
     
     // Variable tracking to identify immediate value transitions
     reg [4:0]  last_target_code = 5'h1F; 
+    reg        last_play_trigger = 1'b0; // Added tracking for the audio trigger edge
 
     // Pure helper function: Transforms binary value to Hexadecimal character code
     function [7:0] to_hex;
@@ -158,7 +174,6 @@ module top (
 
     always @(posedge clk) begin
         if (!delay_done) begin
-            // State 0: Wait for hardware/USB CDC lines to stabilize
             tx_pin <= 1'b1; 
             if (delay_counter < 2000000) begin
                 delay_counter <= delay_counter + 1;
@@ -167,58 +182,50 @@ module top (
                 tx_state      <= 2'd1;
             end
         end else if (tx_state == 2'd1) begin
-            // State 1: Active checking loop for physical target change
             tx_pin     <= 1'b1;
             char_index <= 0;
             
-            // Check if code changed AND make sure it isn't the unpressed/release idle code (5'h10)
+            // Standard check: only trigger on code changes, ignoring idle/release (5'h10)
             if ((target_light_code != last_target_code) && (target_light_code != 5'h10)) begin
                 last_target_code <= target_light_code;
                 
-                // Dynamically format the live state buffer with explicit indices
                 message[0] <= "K"; 
                 message[1] <= "E"; 
                 message[2] <= "Y"; 
                 message[3] <= ":";
-                message[4] <= to_hex({3'b000, target_light_code[4]}); // Hex digit 1
-                message[5] <= to_hex(target_light_code[3:0]);         // Hex digit 2
+                message[4] <= to_hex({3'b000, target_light_code[4]});
+                message[5] <= to_hex(target_light_code[3:0]);
                 message[6] <= "\r"; 
                 message[7] <= "\n";
                 
-                // Latch immediate first block character to start cleanly
                 tx_data     <= "K"; 
                 bit_index   <= 0;
                 clk_counter <= 0;
-                tx_state    <= 2'd2; // Pass to UART pipeline
+                tx_state    <= 2'd2;
             end else if (target_light_code == 5'h10) begin
-                // Update tracking register on release so the next press triggers correctly,
-                // but do not start a UART transmission.
                 last_target_code <= 5'h10;
             end
         end else begin
-            // State 2: Bitstream Serialization Engine
             if (clk_counter < CLK_PER_BIT - 1) begin
                 clk_counter <= clk_counter + 1;
             end else begin
                 clk_counter <= 0;
-                
                 if (bit_index == 0) begin
-                    tx_pin    <= 1'b0; // Start Bit
+                    tx_pin    <= 1'b0;
                     bit_index <= bit_index + 1;
                 end else if (bit_index >= 1 && bit_index <= 8) begin
-                    tx_pin    <= tx_data[bit_index - 1]; // Serial data payload (LSB first)
+                    tx_pin    <= tx_data[bit_index - 1];
                     bit_index <= bit_index + 1;
                 end else if (bit_index == 9) begin
-                    tx_pin    <= 1'b1; // Stop Bit
+                    tx_pin    <= 1'b1;
                     bit_index <= bit_index + 1;
                 end else begin
-                    // Move sequentially to next element in the array
                     if (char_index < 7) begin
                         char_index <= char_index + 1;
-                        tx_data    <= message[char_index + 1]; // Pre-load next character byte
+                        tx_data    <= message[char_index + 1];
                         bit_index  <= 0;
                     end else begin
-                        tx_state   <= 2'd1; // Stream complete, return to evaluation state
+                        tx_state   <= 2'd1;
                     end
                 end
             end
