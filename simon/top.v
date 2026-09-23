@@ -147,7 +147,7 @@ module top (
     // ---------------------------------------------------------------------
     localparam CLK_PER_BIT = 104; // 115200 Baud @ 12MHz Clock
     
-    // Flat 64-bit packed shift register to cleanly hold: "KEY:XX\r\n"
+    // Flat 64-bit packed shift register to cleanly hold: "sim:XX\r\n" or "usr:XX\r\n"
     reg [63:0] tx_string = 64'd0;
     
     reg [31:0] clk_counter = 0;
@@ -204,20 +204,20 @@ module top (
                     last_simon_step  <= audio_play_step_d1;
                     last_input_mode  <= 1'b1;
                     
-                    // Pack the full string instantly into the flat 64-bit bus register (Big Endian)
-                    tx_string[63:56] <= "K";
-                    tx_string[55:48] <= "E";
-                    tx_string[47:40] <= "Y";
+                    // FIXED: Dynamic "sim:" reporting format for Simon's playback steps
+                    tx_string[63:56] <= "s";
+                    tx_string[55:48] <= "i";
+                    tx_string[47:40] <= "m";
                     tx_string[39:32] <= ":";
-                    tx_string[31:24] <= to_hex({2'b00, target_light_code[4:3]}); // Dynamic row identifier
-                    tx_string[23:16] <= to_hex(target_light_code[3:0]);         // Dynamic column identifier
+                    tx_string[31:24] <= to_hex({2'b00, target_light_code[4:3]}); 
+                    tx_string[23:16] <= to_hex(target_light_code[3:0]);         
                     tx_string[15:8]  <= "\r";
                     tx_string[7:0]   <= "\n";
                     
-                    tx_data     <= "K"; // Seed the first bitstream byte
+                    tx_data     <= "s"; // Seed first byte character
                     bit_index   <= 0;
                     clk_counter <= 0;
-                    tx_state    <= 2'd2; // Jump to serial transmitter engine
+                    tx_state    <= 2'd2; // Launch transmitter pipeline
                 end
             end else begin
                 // --- PLAYER'S TURN: Reset Simon's tracking index when turn switches ---
@@ -230,17 +230,17 @@ module top (
                 if ((player_step_counter_d1 != last_player_step) && (matrix_key_code != 5'h10)) begin
                     last_player_step <= player_step_counter_d1;
                     
-                    // Pack the active user keystroke coordinates instantly
-                    tx_string[63:56] <= "K";
-                    tx_string[55:48] <= "E";
-                    tx_string[47:40] <= "Y";
+                    // FIXED: Dynamic "usr:" reporting format for manual player steps
+                    tx_string[63:56] <= "u";
+                    tx_string[55:48] <= "s";
+                    tx_string[47:40] <= "r";
                     tx_string[39:32] <= ":";
                     tx_string[31:24] <= to_hex({3'b000, matrix_key_code[4]}); 
                     tx_string[23:16] <= to_hex(matrix_key_code[3:0]);        
                     tx_string[15:8]  <= "\r";
                     tx_string[7:0]   <= "\n";
                     
-                    tx_data     <= "K";
+                    tx_data     <= "u"; // Seed first byte character
                     bit_index   <= 0;
                     clk_counter <= 0;
                     tx_state    <= 2'd2;
@@ -253,7 +253,7 @@ module top (
             end
             
         end else begin
-            // State 2: Bitstream Serialization Engine (Unpacking flat vector array data)
+            // State 2: Bitstream Serialization Engine (Unpacking flat vector data string)
             if (clk_counter < CLK_PER_BIT - 1) begin
                 clk_counter <= clk_counter + 1;
             end else begin
@@ -275,13 +275,13 @@ module top (
                         
                         // Dynamically extract the next 8-bit slice character byte out of the packed string vector
                         case (char_index + 1)
-                            3'd1: tx_data <= tx_string[55:48]; // "E"
-                            3'd2: tx_data <= tx_string[47:40]; // "Y"
-                            3'd3: tx_data <= tx_string[39:32]; // ":"
+                            3'd1: tx_data <= tx_string[55:48]; // Character 2 ('i' or 's')
+                            3'd2: tx_data <= tx_string[47:40]; // Character 3 ('m' or 'r')
+                            3'd3: tx_data <= tx_string[39:32]; // Character 4 (':')
                             3'd4: tx_data <= tx_string[31:24]; // Hex Digit 1
                             3'd5: tx_data <= tx_string[23:16]; // Hex Digit 2
-                            3'd6: tx_data <= tx_string[15:8];  // "\r"
-                            3'd7: tx_data <= tx_string[7:0];   // "\n"
+                            3'd6: tx_data <= tx_string[15:8];  // '\r'
+                            3'd7: tx_data <= tx_string[7:0];   // '\n'
                             default: tx_data <= "\n";
                         endcase
                         
