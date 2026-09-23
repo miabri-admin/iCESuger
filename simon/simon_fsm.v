@@ -47,6 +47,12 @@ module simon_fsm (
     reg [3:0] lfsr_reg = 4'b1011; 
     reg       lfsr_freeze = 1'b0; 
 
+     // =========================================================================
+    // HARDENED PSEUDO-RANDOM LFSR ENGINE (Maximal Length Taps 3 and 0)
+    // =========================================================================
+    reg [3:0] lfsr_reg = 4'b1011; 
+    reg       lfsr_freeze = 1'b0; 
+
     always @(posedge clk) begin
         if (reset) begin
             lfsr_reg <= 4'b1011; 
@@ -55,9 +61,11 @@ module simon_fsm (
         end
     end
 
-    // Sequence Generation Rules: Maps directly to a 0-15 flat code
-    wire [3:0] rand_key_code = lfsr_reg; 
+    // EASY MODIFICATION: Hardlock rows to 0. Columns swing randomly between 0, 1, 2, 3
+    wire [1:0] rand_row_index = 2'd0;          // FIXED: Hardlocked to first row
+    wire [1:0] rand_col_index = lfsr_reg[1:0]; // Dynamic lower bits provide a 0-3 random sweep
 
+    
     reg [3:0] gen_index = 0; 
     reg [3:0] state = STATE_BOOT_JINGLE;
     reg [24:0] delay_timer = 0;
@@ -173,7 +181,7 @@ module simon_fsm (
                     lfsr_freeze <= 1'b1; 
 
                     // Storing a simple unified 4-bit key layout (0-15)
-                    game_sequence[gen_index] <= rand_key_code;
+                    game_sequence[gen_index] <= (rand_row_index * 3'd4) + rand_col_index;
 
                     if (gen_index >= 4'd11) begin
                         gen_index <= 0;
